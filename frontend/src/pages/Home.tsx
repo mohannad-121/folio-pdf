@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowRight, ArrowUpRight, Infinity as InfinityIcon, Search, Server, Sparkles, WandSparkles, X } from 'lucide-react'
+import {ArrowUpRight, Infinity as InfinityIcon, Search, Server, Sparkles, WandSparkles, X } from 'lucide-react'
 import clsx from 'clsx'
 import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, type ToolCategory, type ToolDef } from '../lib/tools'
 import { CATEGORY_META, categoryAccent } from '../lib/theme'
@@ -242,6 +242,8 @@ function Popular() {
   const tools = TOOLS.filter((t) => t.featured)
   if (!tools.length) return null
   const [a, b, ...rest] = tools
+  // The two large cards take 2 columns each; widen leading regular cards so every row is full.
+  const popularSpans = fillSpans(rest.length, { sm: [2, 4], lg: [4, 4] })
   return (
     <section id={SECTION_IDS.popular} className="scroll-mt-28 pt-14" aria-labelledby="popular-h">
       <SectionHeader
@@ -261,12 +263,12 @@ function Popular() {
         initial={reduce ? false : 'initial'}
         whileInView={reduce ? undefined : 'animate'}
         viewport={{ once: true, margin: '0px 0px -10% 0px' }}
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        className="grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
         {a && <ToolCard tool={a} animate={!reduce} large />}
         {b && <ToolCard tool={b} animate={!reduce} large />}
-        {rest.map((t) => (
-          <ToolCard key={t.id} tool={t} animate={!reduce} />
+        {rest.map((t, i) => (
+          <ToolCard key={t.id} tool={t} animate={!reduce} spanClass={popularSpans[i]} />
         ))}
       </motion.ul>
     </section>
@@ -278,6 +280,7 @@ function Section({ id, title, eyebrow, blurb, tools, category, animateIn = true 
   if (!tools.length) return null
   const acc = category ? categoryAccent(category) : null
   const container = staggerContainer(0.035)
+  const spans = fillSpans(tools.length, { sm: [2, 0], lg: [3, 0], xl: [4, 0] })
   return (
     <section id={id} className="scroll-mt-24 pt-10" aria-labelledby={`${id}-h`} style={acc?.style as CSSProperties | undefined}>
       <div className={clsx('rounded-[1.75rem] p-5 sm:p-7', category && 'section-wash ring-1 ring-inset ring-[color-mix(in_oklab,var(--accent)_12%,transparent)]')}>
@@ -301,10 +304,10 @@ function Section({ id, title, eyebrow, blurb, tools, category, animateIn = true 
           initial={animateIn && !reduce ? 'initial' : false}
           whileInView={animateIn && !reduce ? 'animate' : undefined}
           viewport={{ once: true, margin: '0px 0px -10% 0px' }}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          className="grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
         >
-          {tools.map((t) => (
-            <ToolCard key={t.id} tool={t} animate={animateIn && !reduce} />
+          {tools.map((t, i) => (
+            <ToolCard key={t.id} tool={t} animate={animateIn && !reduce} spanClass={spans[i]} />
           ))}
         </motion.ul>
       </div>
@@ -312,40 +315,82 @@ function Section({ id, title, eyebrow, blurb, tools, category, animateIn = true 
   )
 }
 
-function ToolCard({ tool, animate, large }: { tool: ToolDef; animate: boolean; large?: boolean }) {
+/*
+ * Grid filling. For each breakpoint we know the column count and how many
+ * columns are already taken by fixed-size cards before these ones. Any
+ * leftover cells in the final row are absorbed by widening the leading cards
+ * to span 2 columns; `grid-flow-row-dense` backfills so no holes remain.
+ * Class strings are spelled out literally so Tailwind emits them.
+ */
+const SPAN_CLASSES: Record<'sm' | 'lg' | 'xl', [string, string]> = {
+  sm: ['sm:col-span-1', 'sm:col-span-2'],
+  lg: ['lg:col-span-1', 'lg:col-span-2'],
+  xl: ['xl:col-span-1', 'xl:col-span-2'],
+}
+
+function fillSpans(n: number, bps: Partial<Record<'sm' | 'lg' | 'xl', [cols: number, taken: number]>>): string[] {
+  const out: string[][] = Array.from({ length: n }, () => [])
+  for (const bp of ['sm', 'lg', 'xl'] as const) {
+    const cfg = bps[bp]
+    if (!cfg) continue
+    const [cols, taken] = cfg
+    const used = taken + n
+    const extra = Math.min(n, (cols - (used % cols)) % cols)
+    for (let i = 0; i < n; i++) out[i].push(SPAN_CLASSES[bp][i < extra ? 1 : 0])
+  }
+  return out.map((c) => c.join(' '))
+}
+
+function ToolCard({ tool, animate, large, spanClass }: { tool: ToolDef; animate: boolean; large?: boolean; spanClass?: string }) {
   const acc = categoryAccent(tool.category)
   return (
-    <motion.li variants={animate ? staggerItem : undefined} className={clsx('min-w-0', large && 'sm:col-span-2')}>
+    <motion.li variants={animate ? staggerItem : undefined} className={clsx('min-w-0', large ? 'sm:col-span-2' : spanClass)}>
       <Link
         to={`/tools/${tool.id}`}
         style={acc.style as CSSProperties}
         className={clsx(
           'group relative flex h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-card transition-[transform,box-shadow,border-color] duration-200 ease-out',
           'hover:-translate-y-1 hover:border-[color-mix(in_oklab,var(--accent)_45%,var(--color-border))] hover:shadow-glow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]',
-          large ? 'card-wash-strong flex-col gap-5 p-6 sm:flex-row sm:items-center sm:gap-6 sm:p-7' : 'card-wash gap-3.5 p-4',
+          large ? 'card-wash-strong flex-col gap-5 p-6 sm:flex-row sm:items-center sm:gap-6 sm:p-7' : 'card-wash flex-col gap-4 p-5',
         )}
       >
         {/* Accent glow in the corner, stronger on hover. */}
         <span className={clsx('pointer-events-none absolute -top-16 -right-16 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--accent)_28%,transparent),transparent)] transition-[opacity,transform] duration-300 group-hover:scale-125 group-hover:opacity-100', large ? 'size-56 opacity-70' : 'size-40 opacity-40')} aria-hidden="true" />
         <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-[color-mix(in_oklab,var(--accent)_55%,transparent)] to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" aria-hidden="true" />
 
-        <span className={clsx('relative grid shrink-0 place-items-center transition-transform duration-300 ease-[var(--ease-spring)] group-hover:-rotate-6 group-hover:scale-105', acc.tile, large ? 'size-16 rounded-2xl shadow-[0_12px_28px_-10px_var(--accent)]' : 'size-11 rounded-xl shadow-[0_8px_20px_-10px_var(--accent)]')}>
-          <ToolIcon name={tool.icon} size={large ? 30 : 22} />
-        </span>
+        {large ? (
+          <span className="relative grid size-16 shrink-0 place-items-center rounded-2xl shadow-[0_12px_28px_-10px_var(--accent)] transition-transform duration-300 ease-[var(--ease-spring)] group-hover:-rotate-6 group-hover:scale-105">
+            <span className={clsx('absolute inset-0 grid place-items-center rounded-2xl', acc.tile)}>
+              <ToolIcon name={tool.icon} size={30} />
+            </span>
+          </span>
+        ) : (
+          <span className="relative flex items-start justify-between">
+            <span className={clsx('grid size-11 shrink-0 place-items-center rounded-xl shadow-[0_8px_20px_-10px_var(--accent)] transition-transform duration-300 ease-[var(--ease-spring)] group-hover:-rotate-6 group-hover:scale-105', acc.tile)}>
+              <ToolIcon name={tool.icon} size={22} />
+            </span>
+            <span className="grid size-8 place-items-center rounded-full border border-[color-mix(in_oklab,var(--accent)_30%,var(--color-border))] text-[var(--accent)] opacity-0 transition-[opacity,transform] duration-200 -translate-x-1 translate-y-1 group-hover:translate-x-0 group-hover:translate-y-0 group-hover:opacity-100" aria-hidden="true">
+              <ArrowUpRight size={15} />
+            </span>
+          </span>
+        )}
 
         <span className="relative min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            <span className={clsx('text-title truncate', large ? 'text-xl' : 'text-[15px]')}>{tool.name}</span>
-            {tool.opensViewer && <WandSparkles size={12} className="shrink-0 text-muted-2" aria-label="Opens in editor" />}
+            <span className={clsx('text-title truncate', large ? 'text-xl' : 'text-base')}>{tool.name}</span>
+            {tool.opensViewer && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--accent)_12%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[var(--accent)] uppercase">
+                <WandSparkles size={10} aria-hidden="true" /> Editor
+              </span>
+            )}
           </span>
-          <span className={clsx('mt-1 block text-muted text-pretty', large ? 'text-[15px] leading-relaxed' : 'line-clamp-2 text-sm')}>{tool.description}</span>
+          <span className={clsx('mt-1.5 text-muted text-pretty', large ? 'block text-[15px] leading-relaxed' : 'line-clamp-2 text-sm leading-relaxed')}>{tool.description}</span>
           {large && (
             <span className={clsx('mt-4 inline-flex items-center gap-1.5 text-sm font-semibold', acc.text)}>
               Open tool <ArrowUpRight size={15} className="transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </span>
           )}
         </span>
-        {!large && <ArrowRight size={16} className="relative mt-1 shrink-0 -translate-x-1 text-[var(--accent)] opacity-0 transition-[opacity,transform] duration-200 group-hover:translate-x-0 group-hover:opacity-100" aria-hidden="true" />}
       </Link>
     </motion.li>
   )
