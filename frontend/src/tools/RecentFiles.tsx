@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Clock, X } from 'lucide-react'
 import clsx from 'clsx'
 import { ApiError, formatBytes, getFile, type FileOut } from '../lib/api'
@@ -13,7 +13,11 @@ interface Props {
 
 /** Right-rail list of recently uploaded / produced files (persisted in localStorage). */
 export default function RecentFiles({ canUse, onPick }: Props) {
-  const files = useRecentFiles((s) => selectFresh(s.files))
+  // Select the stable array and derive the filtered view with useMemo:
+  // filtering inside the selector returns a new array every call, which
+  // makes useSyncExternalStore re-render forever.
+  const allFiles = useRecentFiles((s) => s.files)
+  const files = useMemo(() => selectFresh(allFiles), [allFiles])
   const remove = useRecentFiles((s) => s.remove)
   const clear = useRecentFiles((s) => s.clear)
   const [busy, setBusy] = useState<string | null>(null)
