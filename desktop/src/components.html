@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>Optional components</title>
+    <style>
+      :root {
+        --bg: #fafafa;
+        --card: #ffffff;
+        --border: #e4e4ec;
+        --text: #12131c;
+        --muted: #646a85;
+        --brand: #3443f5;
+        --violet: #7c3aed;
+        --ok-bg: #e7f8ef;
+        --ok: #12804a;
+        --miss-bg: #fff4e5;
+        --miss: #a35a00;
+        --code-bg: #f2f3f8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0a0a0f;
+          --card: #12131c;
+          --border: #262838;
+          --text: #e8eaf6;
+          --muted: #8a90b4;
+          --ok-bg: rgb(18 128 74 / 0.18);
+          --ok: #4ade80;
+          --miss-bg: rgb(245 158 11 / 0.14);
+          --miss: #fbbf24;
+          --code-bg: #1a1c28;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--bg); color: var(--text); }
+      body {
+        font: 14px/1.5 Inter, 'Segoe UI', system-ui, -apple-system, sans-serif;
+        padding: 22px 24px 28px;
+      }
+      header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+      .mark {
+        width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none;
+        background: linear-gradient(135deg, #4a63ff, var(--brand) 45%, var(--violet));
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3);
+      }
+      .mark svg { width: 20px; height: 20px; }
+      h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+      .lead { color: var(--muted); margin: 4px 0 18px; }
+      .card {
+        background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+        padding: 14px 16px; margin-bottom: 12px;
+      }
+      .row { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+      h2 { font-size: 15px; margin: 0; }
+      .desc { color: var(--muted); margin: 2px 0 10px; font-size: 13px; }
+      .badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+      .badge.ok { background: var(--ok-bg); color: var(--ok); }
+      .badge.miss { background: var(--miss-bg); color: var(--miss); }
+      .badge.unk { background: var(--code-bg); color: var(--muted); }
+      .cmd {
+        display: flex; align-items: center; gap: 8px; background: var(--code-bg); border-radius: 8px;
+        padding: 6px 6px 6px 10px; margin-bottom: 8px;
+      }
+      code { font: 12.5px/1.4 'JetBrains Mono', Consolas, Menlo, monospace; flex: 1; overflow-x: auto; white-space: nowrap; }
+      button, .link {
+        font: inherit; font-size: 12.5px; border: 1px solid var(--border); background: var(--card); color: var(--text);
+        border-radius: 7px; padding: 4px 10px; cursor: pointer;
+      }
+      button:hover, .link:hover { border-color: var(--brand); }
+      button.primary { background: linear-gradient(135deg, var(--brand), var(--violet)); color: #fff; border: 0; padding: 6px 14px; }
+      .links { display: flex; gap: 8px; flex-wrap: wrap; }
+      .link { text-decoration: none; display: inline-block; }
+      footer { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+      footer p { margin: 0; color: var(--muted); font-size: 12.5px; flex: 1 1 260px; }
+      .err { color: var(--miss); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 3h7l5 5v13H7z" /><path d="M14 3v5h5" /><path d="M10 13h6M10 17h4" />
+        </svg>
+      </div>
+      <h1>Optional components</h1>
+    </header>
+    <p class="lead">
+      Everything in Folio PDF works out of the box except a few tools that rely on free system programs. Install
+      them to unlock those tools.
+    </p>
+    <div id="list"></div>
+    <footer>
+      <p>After installing, restart Folio PDF so it detects the new programs.</p>
+      <div class="links">
+        <button id="refresh" type="button">Check again</button>
+        <button id="logs" type="button">Open logs</button>
+        <button id="restart" type="button" class="primary">Restart Folio PDF</button>
+      </div>
+    </footer>
+
+    <script>
+      const api = window.folioDesktop;
+      const platform = api?.platform ?? 'linux';
+      const COMPONENTS = [
+        {
+          key: 'libreoffice',
+          name: 'LibreOffice',
+          unlocks: 'Word, Excel and PowerPoint to PDF, merging Office files, PDF/A from Office files.',
+          url: 'https://www.libreoffice.org/download/download/',
+          cmds: {
+            win32: ['winget install -e --id TheDocumentFoundation.LibreOffice'],
+            darwin: ['brew install --cask libreoffice'],
+            linux: ['sudo apt install libreoffice-writer libreoffice-calc libreoffice-impress', 'sudo dnf install libreoffice'],
+          },
+        },
+        {
+          key: 'tesseract',
+          name: 'Tesseract OCR',
+          unlocks: 'OCR: make scanned PDFs searchable and selectable.',
+          url: 'https://tesseract-ocr.github.io/tessdoc/Installation.html',
+          cmds: {
+            win32: ['winget install -e --id UB-Mannheim.TesseractOCR'],
+            darwin: ['brew install tesseract tesseract-lang'],
+            linux: ['sudo apt install tesseract-ocr', 'sudo dnf install tesseract'],
+          },
+        },
+        {
+          key: 'ghostscript',
+          name: 'Ghostscript',
+          unlocks: 'PDF/A conversion and OCR post-processing (used together with Tesseract).',
+          url: 'https://ghostscript.com/releases/gsdnld.html',
+          cmds: {
+            win32: ['winget install -e --id ArtifexSoftware.GhostScript'],
+            darwin: ['brew install ghostscript'],
+            linux: ['sudo apt install ghostscript', 'sudo dnf install ghostscript'],
+          },
+        },
+      ];
+
+      function el(tag, attrs = {}, ...children) {
+        const n = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === 'class') n.className = v;
+          else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+          else n.setAttribute(k, v);
+        }
+        for (const c of children) n.append(c);
+        return n;
+      }
+
+      function render(health, error) {
+        const list = document.getElementById('list');
+        list.replaceChildren();
+        if (error) list.append(el('p', { class: 'err' }, `Could not reach the Folio engine: ${error}`));
+        for (const c of COMPONENTS) {
+          const state = health ? health[c.key] : undefined;
+          const badge =
+            state === true
+              ? el('span', { class: 'badge ok' }, 'Installed')
+              : state === false
+                ? el('span', { class: 'badge miss' }, 'Not found')
+                : el('span', { class: 'badge unk' }, 'Unknown');
+          const card = el(
+            'section',
+            { class: 'card' },
+            el('div', { class: 'row' }, el('h2', {}, c.name), badge),
+            el('p', { class: 'desc' }, c.unlocks),
+          );
+          for (const cmd of c.cmds[platform] ?? c.cmds.linux) {
+            const btn = el('button', { type: 'button' }, 'Copy');
+            btn.addEventListener('click', async () => {
+              await api?.copyText(cmd);
+              btn.textContent = 'Copied';
+              setTimeout(() => (btn.textContent = 'Copy'), 1400);
+            });
+            card.append(el('div', { class: 'cmd' }, el('code', {}, cmd), btn));
+          }
+          const dl = el('a', { class: 'link', href: c.url }, 'Download page ↗');
+          dl.addEventListener('click', (e) => {
+            e.preventDefault();
+            api?.openExternal(c.url);
+          });
+          card.append(el('div', { class: 'links' }, dl));
+          list.append(card);
+        }
+      }
+
+      async function refresh() {
+        try {
+          render(await api.getHealth());
+        } catch (e) {
+          render(null, e?.message ?? String(e));
+        }
+      }
+
+      document.getElementById('refresh').addEventListener('click', refresh);
+      document.getElementById('logs').addEventListener('click', () => api?.openLogs());
+      document.getElementById('restart').addEventListener('click', () => api?.relaunch());
+      render(null);
+      refresh();
+    </script>
+  </body>
+</html>

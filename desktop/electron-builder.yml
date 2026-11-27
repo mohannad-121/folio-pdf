@@ -1,0 +1,124 @@
+# electron-builder configuration for Folio PDF.
+# Docs: https://www.electron.build/configuration
+appId: com.folio.pdf
+productName: Folio PDF
+copyright: Copyright © 2026 Folio PDF contributors
+artifactName: Folio-PDF-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: dist
+  buildResources: build
+
+asar: true
+files:
+  - package.json
+  - src/**/*
+  - build/icon.png
+  - build/icon.ico
+  - "!**/*.map"
+
+# The frozen Python backend (PyInstaller onedir) and the built React app live next to the asar.
+extraResources:
+  - from: build/backend
+    to: backend
+    filter: ["**/*"]
+  - from: build/frontend-dist
+    to: frontend-dist
+    filter: ["**/*"]
+
+afterPack: scripts/after-pack.cjs
+
+fileAssociations:
+  - ext: pdf
+    name: PDF Document
+    description: PDF Document
+    mimeType: application/pdf
+    role: Editor
+    rank: Alternate
+    icon: icon
+
+publish:
+  - provider: github
+    owner: mohannad-121
+    repo: folio-pdf
+    releaseType: draft
+
+# ---- Windows -----------------------------------------------------------------------------
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # Signing activates automatically when CSC_LINK / CSC_KEY_PASSWORD (or WIN_CSC_LINK) are set.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Folio PDF
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  deleteAppDataOnUninstall: false
+  artifactName: Folio-PDF-${version}-win-${arch}-setup.${ext}
+
+portable:
+  artifactName: Folio-PDF-${version}-win-${arch}-portable.${ext}
+
+# ---- macOS -------------------------------------------------------------------------------
+# Build per architecture on a native runner (PyInstaller cannot produce universal sidecars
+# from a single-arch Python): `electron-builder --mac --arm64` on Apple silicon,
+# `--x64` on an Intel runner.
+mac:
+  icon: build/icon.png # electron-builder converts the 1024 px PNG to .icns
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip # zip is required by electron-updater on macOS
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Code signing uses CSC_LINK / CSC_KEY_PASSWORD when present. Notarization runs
+  # automatically when APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (or the
+  # APPLE_API_KEY trio) are in the environment, and is skipped otherwise.
+  extendInfo:
+    NSHumanReadableCopyright: Copyright © 2026 Folio PDF contributors
+    LSApplicationCategoryType: public.app-category.productivity
+
+dmg:
+  artifactName: Folio-PDF-${version}-mac-${arch}.${ext}
+  title: Folio PDF ${version}
+
+# ---- Linux -------------------------------------------------------------------------------
+linux:
+  icon: build/icon.png
+  executableName: folio-pdf
+  category: Office
+  mimeTypes: [application/pdf]
+  synopsis: Every PDF tool in one app
+  description: View, edit, convert, merge, split, compress, OCR, sign and protect PDFs, offline.
+  maintainer: Folio PDF <folio-pdf@users.noreply.github.com>
+  vendor: Folio PDF
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  desktop:
+    entry:
+      StartupWMClass: Folio PDF
+      Keywords: pdf;viewer;editor;convert;merge;sign;ocr;
+
+deb:
+  depends: [libnss3, libgtk-3-0 | libgtk-3-0t64, libxss1, libxtst6, libatspi2.0-0 | libatspi2.0-0t64, libsecret-1-0, libnotify4, xdg-utils]
+  recommends: [tesseract-ocr, ghostscript, libreoffice-writer]
+
+rpm:
+  fpm: ["--rpm-rpmbuild-define=_build_id_links none"]

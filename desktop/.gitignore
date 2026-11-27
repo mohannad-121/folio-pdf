@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Build outputs (icons in build/ are committed)
+build/backend/
+build/frontend-dist/
+build/pyinstaller-work/
+build/pyinstaller-dist/
+build/*.log

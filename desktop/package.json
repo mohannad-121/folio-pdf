@@ -1,0 +1,39 @@
+{
+  "name": "folio-pdf-desktop",
+  "productName": "Folio PDF",
+  "version": "0.1.0",
+  "description": "Folio PDF: every PDF tool in one app. View, edit, convert, merge, compress, OCR, sign and protect PDFs offline.",
+  "homepage": "https://github.com/mohannad-121/folio-pdf",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohannad-121/folio-pdf.git"
+  },
+  "author": {
+    "name": "Folio PDF",
+    "email": "folio-pdf@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build:icons": "node scripts/build-icons.mjs",
+    "build": "npm run build:frontend && npm run build:backend",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "electron-log": "5.4.4",
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0"
+  }
+}

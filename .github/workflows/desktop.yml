@@ -1,0 +1,180 @@
+name: Desktop
+
+# Builds the Electron desktop app (with the PyInstaller-frozen backend) for Windows, macOS
+# (Apple silicon + Intel) and Linux.
+#   * push a tag v*      -> installers are attached to a DRAFT GitHub release for that tag
+#   * workflow_dispatch  -> installers are uploaded as workflow artifacts only
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Create the draft release once, so the parallel builds don't race to create it.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --draft --title "Folio PDF ${GITHUB_REF_NAME#v}" --generate-notes
+
+  build:
+    needs: release
+    if: ${{ !failure() && !cancelled() }}
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            eb_args: --win --x64
+          - name: mac-arm64
+            os: macos-latest
+            eb_args: --mac --arm64
+          # Intel macOS. (The old macos-13 image is retired; macos-15-intel is the x64 image.)
+          - name: mac-x64
+            os: macos-15-intel
+            eb_args: --mac --x64
+          # Older glibc -> the AppImage/deb run on more distributions.
+          - name: linux-x64
+            os: ubuntu-22.04
+            eb_args: --linux --x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Code signing / notarization switch on automatically once these secrets exist.
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm libarchive-tools
+
+      - name: Install backend dependencies + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+
+      - name: Set app version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: desktop
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - name: npm ci (frontend)
+        working-directory: frontend
+        run: npm ci
+
+      - name: npm ci (desktop)
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop
+        run: npm run build:frontend
+
+      - name: Build backend sidecar (PyInstaller)
+        working-directory: desktop
+        env:
+          FOLIO_PYTHON: python
+        run: npm run build:backend
+
+      # Starts the frozen server, checks /api/health and /, uploads a tiny PDF and rotates it.
+      - name: Smoke test frozen backend
+        working-directory: desktop
+        run: node scripts/smoke-backend.mjs
+
+      # Without a Developer ID certificate, ad-hoc sign the mac app: Apple silicon refuses to run
+      # completely unsigned code ("app is damaged"), ad-hoc + quarantine removal works.
+      - name: Signing mode
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ] && [ -z "$CSC_LINK" ]; then
+            echo "EB_EXTRA=-c.mac.identity=-" >> "$GITHUB_ENV"
+            echo "macOS: no CSC_LINK secret, using ad-hoc signature"
+          fi
+
+      - name: Package (publish to draft release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder ${{ matrix.eb_args }} $EB_EXTRA --publish always
+
+      - name: Package (no publish)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: desktop
+        run: npx electron-builder ${{ matrix.eb_args }} $EB_EXTRA --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: folio-pdf-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.rpm
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
+
+  # Both mac builds write latest-mac.yml; merge them so auto-update serves each arch its own zip.
+  merge-mac-update-info:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: folio-pdf-mac-*
+      - name: Merge latest-mac.yml and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          arm=folio-pdf-mac-arm64/latest-mac.yml
+          x64=folio-pdf-mac-x64/latest-mac.yml
+          test -f "$arm" && test -f "$x64"
+          # Insert the x64 `files:` entries into the arm64 file (before its top-level `path:`).
+          awk '/^files:/{f=1;next} /^[a-zA-Z]/{f=0} f' "$x64" > x64-files.txt
+          awk -v extra="$(cat x64-files.txt)" '/^path:/ && !done {print extra; done=1} {print}' "$arm" > latest-mac.yml
+          cat latest-mac.yml
+          gh release upload "$GITHUB_REF_NAME" latest-mac.yml --clobber
