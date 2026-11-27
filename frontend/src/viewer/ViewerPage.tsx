@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { downloadUrl, getPdfInfo, uploadFiles, ApiError } from '../lib/api'
+import { handleGatingError } from '../lib/upgrade'
 import { addFormFields, applyEdits, fetchPdfBytes, getAnnotations, getFormFields, getLinks, getImages } from './api'
 import DocumentView from './components/DocumentView'
 import InfoDialog from './components/InfoDialog'
@@ -214,7 +215,8 @@ function Viewer({ fileId, tool }: { fileId: string; tool: string | null }) {
       s.notify('success', 'Saved')
       navigate(`/view/${fid}${window.location.search}`)
     } catch (e) {
-      s.notify('error', `Save failed: ${(e as Error).message}`)
+      if (handleGatingError(e)) s.notify('info', 'Saving these edits needs a higher plan')
+      else s.notify('error', `Save failed: ${(e as Error).message}`)
     } finally {
       setSaving(false)
     }

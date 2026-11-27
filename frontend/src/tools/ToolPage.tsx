@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowRight, Check, ChevronRight, CircleExclamationPoint, Copy, Sparkles, TriangleExclamationPoint } from 'lucide-react'
+import { ArrowRight, Check, ChevronRight, CircleExclamationPoint, Copy, Lock, Sparkles, TriangleExclamationPoint } from 'lucide-react'
 import clsx from 'clsx'
 import { ApiError, getFile, getPdfInfo, runTool, uploadFiles, type FileOut, type ToolResult } from '../lib/api'
 import { CATEGORY_LABELS, TOOLS, TOOLS_BY_ID, type ToolDef } from '../lib/tools'
@@ -17,6 +17,10 @@ import ResultsStep from './ResultsStep'
 import RecentFiles from './RecentFiles'
 import { allowsMultiple, fileMatches, maxFiles } from './accept'
 import { isVisible } from './visibility'
+import UpgradeCard from '../components/UpgradeCard'
+import { useAuth, useEntitlement, useTier } from '../lib/auth'
+import { optionTier, TIER_META, tierCovers, type Tier } from '../lib/plans'
+import { handleGatingError, openUpgrade } from '../lib/upgrade'
 import { useRecentFiles, type RecentFile } from './store'
 import { inputFromFileOut, isPdfType, nextLocalId, type InputFile, type OptionValues } from './types'
 
@@ -42,6 +46,22 @@ function defaultValues(tool: ToolDef): OptionValues {
   return v
 }
 
+/** Swap untouched select defaults the user's tier cannot use for the best allowed option. */
+function adjustForTier(tool: ToolDef, values: OptionValues, tier: Tier, touched: Set<string>): OptionValues {
+  let out = values
+  for (const f of tool.options ?? []) {
+    if (f.type !== 'select' || touched.has(f.key)) continue
+    const need = optionTier(tool.id, f.key, out[f.key])
+    if (!need || tierCovers(tier, need)) continue
+    const alt = f.options.find((o) => {
+      const t = optionTier(tool.id, f.key, o.value)
+      return !t || tierCovers(tier, t)
+    })
+    if (alt) out = { ...out, [f.key]: alt.value }
+  }
+  return out
+}
+
 function ToolPageInner({ tool }: { tool: ToolDef }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -59,6 +79,15 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
   const [elapsedMs, setElapsedMs] = useState<number | undefined>(undefined)
   const [error, setError] = useState<Error | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const entitlement = useEntitlement(tool.id)
+  const tier = useTier()
+  const authLoading = useAuth((s) => s.loading)
+  const touched = useRef(new Set<string>())
+  // Once the session is known, move locked defaults (e.g. compress "medium" on Free) to an allowed option.
+  useEffect(() => {
+    if (authLoading) return
+    setValues((v) => adjustForTier(tool, v, tier, touched.current))
+  }, [authLoading, tier, tool])
   // Latest files for event handlers (kept in sync after each render).
   const filesRef = useRef(files)
   useEffect(() => {
@@ -160,7 +189,7 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
           .catch((e: unknown) => {
             const msg = e instanceof Error ? e.message : 'Upload failed'
             patch(entry.localId, { status: 'error', error: msg })
-            toast.error('Upload failed', `${entry.name}: ${msg}`)
+            if (!handleGatingError(e)) toast.error('Upload failed', `${entry.name}: ${msg}`)
           })
       })
     },
@@ -232,7 +261,18 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
   const urlValue = typeof values.url === 'string' ? values.url.trim() : ''
   const hasInvalid = Object.values(invalid).some(Boolean)
 
+  const lockedOption = (() => {
+    for (const f of tool.options ?? []) {
+      if (!isVisible(tool.id, f.key, values)) continue
+      const need = optionTier(tool.id, f.key, values[f.key])
+      if (need && !tierCovers(tier, need)) return { field: f, need }
+    }
+    return null
+  })()
+
   const blocker = useMemo<string | null>(() => {
+    if (!entitlement.allowed) return `${tool.name} is part of ${TIER_META[entitlement.requiredPlan].name}. Start a free trial to run it.`
+    if (lockedOption) return `This ${lockedOption.field.label.toLowerCase()} needs ${TIER_META[lockedOption.need].name}.`
     if (uploading) return 'Waiting for uploads to finish…'
     if (files.some((f) => f.status === 'error')) return 'Remove the failed upload to continue.'
     if (isPair && ready.length < 2) return 'Add both PDFs to compare.'
@@ -240,7 +280,7 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
     if (!isHtml && ready.length === 0) return null
     if (hasInvalid) return 'Fix the highlighted option.'
     return null
-  }, [files, hasInvalid, isHtml, isPair, ready.length, uploading, urlValue])
+  }, [entitlement.allowed, entitlement.requiredPlan, files, hasInvalid, isHtml, isPair, lockedOption, ready.length, tool.name, uploading, urlValue])
   const canRun = !blocker && (ready.length > 0 || (isHtml && !!urlValue))
   const showOptions = files.length > 0 || isHtml
 
@@ -275,9 +315,11 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
       setPhase('done')
       window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
     } catch (e) {
+      setPhase('input')
+      // Plan limits (402 / 413 / 429) open the upgrade dialog instead of the error panel.
+      if (handleGatingError(e)) return
       const err = e instanceof Error ? e : new Error(String(e))
       setError(err)
-      setPhase('input')
       toast.error(`${tool.name} failed`, err.message)
     }
   }
@@ -285,7 +327,8 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
   const startOver = () => {
     files.forEach((f) => f.previewUrl && URL.revokeObjectURL(f.previewUrl))
     setFiles([])
-    setValues(defaultValues(tool))
+    touched.current.clear()
+    setValues(adjustForTier(tool, defaultValues(tool), tier, touched.current))
     setInvalid({})
     setResult(null)
     setElapsedMs(undefined)
@@ -349,6 +392,8 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-6">
+          {!entitlement.allowed && phase !== 'done' && <UpgradeCard tier={entitlement.requiredPlan} toolName={tool.name} />}
+
           <Stepper phase={phase} hasFiles={files.length > 0} hasOptions={!!tool.options?.length} viewer={!!tool.opensViewer} />
 
           <AnimatePresence initial={false}>
@@ -413,7 +458,13 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
                               </Badge>
                             )}
                           </div>
-                          <OptionsForm tool={tool} values={values} onChange={(k, v) => setValues((o) => ({ ...o, [k]: v }))} pageCount={pageCount} onValidity={onValidity} onExtraUpload={(f) => addRecent(f, 'upload')} />
+                          <OptionsForm
+                            tool={tool}
+                            values={values}
+                            onChange={(k, v) => {
+                              touched.current.add(k)
+                              setValues((o) => ({ ...o, [k]: v }))
+                            }} pageCount={pageCount} onValidity={onValidity} onExtraUpload={(f) => addRecent(f, 'upload')} />
                         </>
                       ) : (
                         <h2 id="step-options" className="flex items-center gap-2 text-sm text-muted">
@@ -421,9 +472,20 @@ function ToolPageInner({ tool }: { tool: ToolDef }) {
                         </h2>
                       )}
                       <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
-                        <Button type="submit" variant="accent" size="lg" disabled={!canRun} className={clsx('group min-w-48', acc.gradient)} rightIcon={<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" />}>
-                          {runLabel}
-                        </Button>
+                        {entitlement.allowed ? (
+                          <Button type="submit" variant="accent" size="lg" disabled={!canRun} className={clsx('group min-w-48', acc.gradient)} rightIcon={<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" />}>
+                            {runLabel}
+                          </Button>
+                        ) : (
+                          <Button type="submit" variant="secondary" size="lg" disabled className="min-w-48" leftIcon={<Lock />}>
+                            Requires {TIER_META[entitlement.requiredPlan].name}
+                          </Button>
+                        )}
+                        {!entitlement.allowed && (
+                          <Button variant="ghost" size="lg" onClick={() => openUpgrade({ requiredPlan: entitlement.requiredPlan, code: 'upgrade_required', feature: tool.name })}>
+                            Unlock
+                          </Button>
+                        )}
                         <AnimatePresence mode="wait" initial={false}>
                           {blocker && (
                             <motion.span key={blocker} initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="text-sm text-muted">

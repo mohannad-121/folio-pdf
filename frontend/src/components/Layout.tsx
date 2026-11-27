@@ -1,18 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink, useLocation, useOutlet } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate, useOutlet } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import { Code2 as Github, Menu, Search, X } from 'lucide-react'
+import { Code2 as Github, LogIn, Menu, Search, Sparkles, User as UserIcon, X } from 'lucide-react'
 import clsx from 'clsx'
 import { useThemeEffect } from '../lib/theme'
+import { useAuth, useAuthBootstrap } from '../lib/auth'
+import { registerNavigate, useCheckout } from '../lib/paddle'
 import { instant, page, slideDown, spring } from '../lib/motion'
 import ThemeToggle from './ThemeToggle'
 import CommandPalette, { useCommandPalette } from './CommandPalette'
 import { Kbd, Toaster, modKey } from './ui'
+import BrandMark from './BrandMark'
+import UserMenu from './UserMenu'
+import AuthDialog from './AuthDialog'
+import UpgradeDialog from './UpgradeDialog'
+import ChangePlanDialog from './ChangePlanDialog'
+
+export { BrandMark }
 
 const GITHUB_URL = 'https://github.com/mohannad-121/folio-pdf'
 const VERSION = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? '0.1.0'
 
-const NAV: { to: string; label: string }[] = [
+const BASE_NAV: { to: string; label: string }[] = [
   { to: '/', label: 'All tools' },
   { to: '/tools/merge', label: 'Merge' },
   { to: '/tools/compress', label: 'Compress' },
@@ -20,9 +29,17 @@ const NAV: { to: string; label: string }[] = [
   { to: '/tools/edit', label: 'Edit' },
   { to: '/tools/sign', label: 'Sign' },
 ]
+const PRICING_NAV = { to: '/pricing', label: 'Pricing' }
 
 export default function Layout() {
   useThemeEffect()
+  useAuthBootstrap()
+  const navigate = useNavigate()
+  useEffect(() => registerNavigate(navigate), [navigate])
+  const billing = useAuth((s) => !!s.me?.billing_enabled)
+  const user = useAuth((s) => s.me?.user ?? null)
+  const openAuth = useCheckout((s) => s.openAuth)
+  const NAV = billing ? [...BASE_NAV, PRICING_NAV] : BASE_NAV
   const { pathname } = useLocation()
   const outlet = useOutlet()
   const reduce = useReducedMotion()
@@ -58,7 +75,7 @@ export default function Layout() {
           </Link>
 
           <LayoutGroup id="main-nav">
-            <nav className="hidden items-center gap-0.5 text-sm md:flex" aria-label="Primary">
+            <nav className="hidden items-center gap-0.5 text-sm lg:flex" aria-label="Primary">
               {NAV.map((n) => (
                 <NavItem key={n.to} to={n.to} label={n.label} reduce={!!reduce} />
               ))}
@@ -73,7 +90,7 @@ export default function Layout() {
               aria-label="Search tools"
             >
               <Search size={15} aria-hidden="true" />
-              <span className="hidden lg:inline">Search tools</span>
+              <span className="hidden xl:inline">Search tools</span>
               <span className="ml-1 inline-flex items-center gap-0.5">
                 <Kbd>{modKey()}</Kbd>
                 <Kbd>K</Kbd>
@@ -82,12 +99,18 @@ export default function Layout() {
             <button type="button" onClick={() => openPalette(true)} className="grid size-9 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg sm:hidden" aria-label="Search tools">
               <Search size={18} />
             </button>
-            <ThemeToggle className="hidden sm:inline-flex" />
-            <ThemeToggle compact className="sm:hidden" />
-            <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="hidden size-9 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg sm:grid" aria-label="GitHub repository">
+            {/* Wrappers own visibility: the toggles set their own display utilities. */}
+            <span className="hidden xl:contents">
+              <ThemeToggle />
+            </span>
+            <span className="contents xl:hidden">
+              <ThemeToggle compact />
+            </span>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" className={clsx('hidden size-9 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg', billing ? 'xl:grid' : 'sm:grid')} aria-label="GitHub repository">
               <Github size={18} />
             </a>
-            <button type="button" onClick={() => setMenu((m) => !m)} className="grid size-9 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg md:hidden" aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu} aria-controls="mobile-menu">
+            <UserMenu />
+            <button type="button" onClick={() => setMenu((m) => !m)} className="grid size-9 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg lg:hidden" aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu} aria-controls="mobile-menu">
               {menu ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
@@ -95,7 +118,7 @@ export default function Layout() {
 
         <AnimatePresence initial={false}>
           {menu && (
-            <motion.nav id="mobile-menu" aria-label="Primary" variants={reduce ? undefined : slideDown} initial="initial" animate="animate" exit="exit" className="overflow-hidden border-t border-border md:hidden">
+            <motion.nav id="mobile-menu" aria-label="Primary" variants={reduce ? undefined : slideDown} initial="initial" animate="animate" exit="exit" className="overflow-hidden border-t border-border lg:hidden">
               <ul className="mx-auto max-w-7xl space-y-0.5 px-3 py-3">
                 {NAV.map((n) => (
                   <li key={n.to}>
@@ -104,6 +127,33 @@ export default function Layout() {
                     </NavLink>
                   </li>
                 ))}
+                {billing && (
+                  <li className="mt-2 border-t border-border pt-2">
+                    {user ? (
+                      <NavLink to="/account" onClick={() => setMenu(false)} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted hover:bg-surface-2 hover:text-fg">
+                        <UserIcon size={16} /> Account
+                      </NavLink>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenu(false)
+                          openAuth('signin')
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted hover:bg-surface-2 hover:text-fg"
+                      >
+                        <LogIn size={16} /> Sign in
+                      </button>
+                    )}
+                  </li>
+                )}
+                {billing && (
+                  <li className="sm:hidden">
+                    <NavLink to="/pricing" onClick={() => setMenu(false)} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-surface-2 dark:text-brand-300">
+                      <Sparkles size={16} /> Upgrade
+                    </NavLink>
+                  </li>
+                )}
                 <li className="pt-2">
                   <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-fg">
                     <Github size={16} /> GitHub
@@ -143,29 +193,22 @@ export default function Layout() {
               <a href={`${GITHUB_URL}#readme`} target="_blank" rel="noreferrer" className="transition hover:text-fg">
                 Docs
               </a>
+              {billing && (
+                <Link to="/pricing" className="transition hover:text-fg">
+                  Pricing
+                </Link>
+              )}
             </div>
           </div>
         </footer>
       )}
 
       <CommandPalette />
+      <AuthDialog />
+      <UpgradeDialog />
+      <ChangePlanDialog />
       <Toaster />
     </div>
-  )
-}
-
-/** Gradient brand tile. */
-export function BrandMark({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
-  const s = size === 'sm' ? 'size-5 rounded-[6px]' : size === 'lg' ? 'size-12 rounded-2xl' : 'size-8 rounded-lg'
-  return (
-    <span className={clsx('relative grid shrink-0 place-items-center overflow-hidden bg-linear-to-br from-brand-500 via-brand-600 to-cat-organize-600 text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.3),0_2px_6px_-1px_rgb(52_67_245/0.5)]', s)} aria-hidden="true">
-      <svg viewBox="0 0 24 24" className={size === 'sm' ? 'size-3' : size === 'lg' ? 'size-7' : 'size-[18px]'} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M7 3h7l5 5v13H7z" />
-        <path d="M14 3v5h5" />
-        <path d="M10 13h6M10 17h4" />
-      </svg>
-      <span className="pointer-events-none absolute -top-1/2 left-0 h-full w-full rotate-12 bg-white/10" />
-    </span>
   )
 }
 

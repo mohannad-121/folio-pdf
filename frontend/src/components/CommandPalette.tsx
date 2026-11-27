@@ -8,6 +8,9 @@ import { categoryAccent } from '../lib/theme'
 import ToolIcon from './ToolIcon'
 import { Dialog, Kbd } from './ui'
 import { useRecentTools } from './recentTools'
+import TierBadge from './TierBadge'
+import { useTier } from '../lib/auth'
+import { tierRank, toolTier, usePlans } from '../lib/plans'
 
 interface PaletteState {
   open: boolean
@@ -69,6 +72,8 @@ export default function CommandPalette() {
 function PaletteBody({ close }: { close: () => void }) {
   const recentIds = useRecentTools((s) => s.ids)
   const navigate = useNavigate()
+  const tier = useTier()
+  const plans = usePlans((s) => s.plans)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -177,7 +182,10 @@ function PaletteBody({ close }: { close: () => void }) {
                       <ToolIcon name={t.icon} size={16} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{t.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">{t.name}</span>
+                        {tierRank(tier) < tierRank(toolTier(t.id, plans)) && <TierBadge tier={toolTier(t.id, plans)} locked size="xs" srLabel="plan required" />}
+                      </span>
                       <span className="block truncate text-xs text-muted">{t.description}</span>
                     </span>
                     <span className={clsx('hidden shrink-0 text-[11px] font-medium sm:block', acc.text)}>{CATEGORY_LABELS[t.category]}</span>

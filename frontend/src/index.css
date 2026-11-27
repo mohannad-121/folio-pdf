@@ -126,6 +126,37 @@
   }
 }
 
+/* Plan tier colors (always emitted). free = neutral slate, plus = sky,
+   pro = brand → violet (uses brand + cat-organize), max = amber / gold. */
+@theme static {
+  --color-tier-free-300: #cbd5e1;
+  --color-tier-free-400: #94a3b8;
+  --color-tier-free-500: #64748b;
+  --color-tier-free-600: #475569;
+  --color-tier-free-700: #334155;
+
+  --color-tier-plus-100: #e0f2fe;
+  --color-tier-plus-200: #bae6fd;
+  --color-tier-plus-300: #7dd3fc;
+  --color-tier-plus-400: #38bdf8;
+  --color-tier-plus-500: #0ea5e9;
+  --color-tier-plus-600: #0284c7;
+  --color-tier-plus-700: #0369a1;
+  --color-tier-plus-800: #075985;
+
+  --color-tier-max-50: #fffbeb;
+  --color-tier-max-100: #fef3c7;
+  --color-tier-max-200: #fde68a;
+  --color-tier-max-300: #fcd34d;
+  --color-tier-max-400: #fbbf24;
+  --color-tier-max-500: #f59e0b;
+  --color-tier-max-600: #d97706;
+  --color-tier-max-700: #b45309;
+  --color-tier-max-800: #92400e;
+  --color-tier-max-900: #78350f;
+  --color-tier-max-950: #451a03;
+}
+
 /* Semantic surfaces flip with the theme, so they are plain custom properties
    exposed to Tailwind via @theme inline (bg-surface, text-fg, border-border, …). */
 @theme inline {
@@ -332,6 +363,13 @@
   background-image:
     radial-gradient(900px 320px at 0% 0%, color-mix(in oklab, var(--accent, var(--color-brand-500)) 9%, transparent), transparent 70%),
     linear-gradient(180deg, color-mix(in oklab, var(--accent, var(--color-brand-500)) 4%, transparent), transparent 70%);
+}
+
+/* Multi-stop gradient border for the featured pricing card (Pro). */
+@utility ring-tier {
+  border-color: transparent;
+  background: linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+    linear-gradient(140deg, var(--accent, var(--color-brand-500)), var(--accent-2, var(--color-cat-organize-500)) 50%, var(--color-cat-review-500)) border-box;
 }
 
 @utility tabular {

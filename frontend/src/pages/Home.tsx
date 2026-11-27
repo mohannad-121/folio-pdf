@@ -9,6 +9,9 @@ import { instant, spring, staggerContainer, staggerItem, tween } from '../lib/mo
 import ToolIcon from '../components/ToolIcon'
 import { fuzzyScore, useCommandPalette } from '../components/CommandPalette'
 import { Badge, Kbd, modKey } from '../components/ui'
+import TierBadge from '../components/TierBadge'
+import { useLockedTier } from '../lib/auth'
+import { toolTier, usePlans } from '../lib/plans'
 
 const SECTION_IDS: Record<string, string> = { popular: 'popular', ...Object.fromEntries(CATEGORY_ORDER.map((c) => [c, `cat-${c}`])) }
 
@@ -343,6 +346,8 @@ function fillSpans(n: number, bps: Partial<Record<'sm' | 'lg' | 'xl', [cols: num
 
 function ToolCard({ tool, animate, large, spanClass }: { tool: ToolDef; animate: boolean; large?: boolean; spanClass?: string }) {
   const acc = categoryAccent(tool.category)
+  const required = usePlans((s) => toolTier(tool.id, s.plans))
+  const locked = useLockedTier(required)
   return (
     <motion.li variants={animate ? staggerItem : undefined} className={clsx('min-w-0', large ? 'sm:col-span-2' : spanClass)}>
       <Link
@@ -383,6 +388,7 @@ function ToolCard({ tool, animate, large, spanClass }: { tool: ToolDef; animate:
                 <WandSparkles size={10} aria-hidden="true" /> Editor
               </span>
             )}
+            {locked && <TierBadge tier={locked} locked size="xs" srLabel="plan required" />}
           </span>
           <span className={clsx('mt-1.5 text-muted text-pretty', large ? 'block text-[15px] leading-relaxed' : 'line-clamp-2 text-sm leading-relaxed')}>{tool.description}</span>
           {large && (

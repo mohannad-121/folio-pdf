@@ -1,24 +1,9 @@
 /** Viewer-specific API helpers (edit / forms / sign / organize / security). */
-import { API_BASE, ApiError, downloadUrl, postJson, runTool, type ToolResult } from '../lib/api'
+import { ApiError, downloadUrl, getJson, postJson, runTool, type ToolResult } from '../lib/api'
 import type { Annotation, EditOp, FormField, NewFormField, PageImage, PageTextSpans, PdfLink, RectT } from './types'
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
-  if (!res.ok) {
-    let detail = res.statusText
-    try {
-      const body = await res.json()
-      detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body)
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, detail)
-  }
-  return (await res.json()) as T
-}
-
 export async function fetchPdfBytes(fileId: string): Promise<ArrayBuffer> {
-  const res = await fetch(downloadUrl(fileId, true))
+  const res = await fetch(downloadUrl(fileId, true), { credentials: 'include' })
   if (!res.ok) throw new ApiError(res.status, `Could not download file (${res.status})`)
   return res.arrayBuffer()
 }

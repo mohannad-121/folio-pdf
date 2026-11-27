@@ -49,27 +49,85 @@ export interface PdfInfo {
   has_text: boolean
 }
 
+/** Gating / error codes the backend puts in `detail.code`. */
+export type ApiErrorCode = 'upgrade_required' | 'file_too_large' | 'daily_limit' | 'login_required' | (string & {})
+
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** Machine-readable code from an object `detail` (e.g. "upgrade_required"). */
+  code?: ApiErrorCode
+  /** The whole object `detail` (e.g. { required_plan, max_mb, reset_at, … }). */
+  data?: Record<string, unknown>
+  constructor(status: number, message: string, code?: string, data?: Record<string, unknown>) {
     super(message)
+    this.name = 'ApiError'
     this.status = status
+    this.code = code
+    this.data = data
   }
+}
+
+/** Build an ApiError from a parsed error body (`{detail: string | object | array}`). */
+export function apiErrorFrom(status: number, body: unknown, fallback: string): ApiError {
+  const detail = body && typeof body === 'object' && 'detail' in body ? (body as { detail: unknown }).detail : body
+  if (typeof detail === 'string' && detail) return new ApiError(status, detail)
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const d = detail as Record<string, unknown>
+    const message = typeof d.message === 'string' && d.message ? d.message : typeof d.code === 'string' ? d.code.replace(/_/g, ' ') : JSON.stringify(d)
+    return new ApiError(status, message, typeof d.code === 'string' ? d.code : undefined, d)
+  }
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors: [{loc, msg, type}]
+    const msgs = detail.map((x) => (x && typeof x === 'object' && 'msg' in x ? String((x as { msg: unknown }).msg) : JSON.stringify(x)))
+    return new ApiError(status, msgs.join('; ') || fallback)
+  }
+  return new ApiError(status, fallback)
+}
+
+/** True when the response is JSON (an SPA fallback returns HTML for unknown /api routes). */
+function isJsonResponse(res: Response): boolean {
+  return (res.headers.get('content-type') ?? '').includes('json')
 }
 
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let detail = res.statusText
+    let body: unknown = null
     try {
-      const body = await res.json()
-      detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body)
+      body = await res.json()
     } catch {
-      /* ignore */
+      /* not JSON */
     }
-    throw new ApiError(res.status, detail)
+    throw apiErrorFrom(res.status, body, res.statusText || `HTTP ${res.status}`)
   }
   if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  const text = await res.text()
+  if (!text) return undefined as T
+  if (!isJsonResponse(res) && /^\s*</.test(text)) {
+    // An HTML page where JSON was expected: the endpoint does not exist on this server.
+    throw new ApiError(404, 'This server does not provide that endpoint.', 'not_implemented')
+  }
+  return JSON.parse(text) as T
+}
+
+/** Same-origin fetch that always sends the session cookie. */
+export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${API_BASE}${path}`, { credentials: 'include', ...init })
+}
+
+/** GET JSON from an API path (e.g. "/api/plans"). */
+export async function getJson<T>(path: string): Promise<T> {
+  return handle<T>(await apiFetch(path, { headers: { Accept: 'application/json' } }))
+}
+
+/** Send JSON with any method. `body` is omitted when undefined. */
+export async function sendJson<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  return handle<T>(
+    await apiFetch(path, {
+      method,
+      headers: body === undefined ? { Accept: 'application/json' } : { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  )
 }
 
 export function downloadUrl(f: FileOut | string, inline = false): string {
@@ -90,6 +148,7 @@ export async function uploadFiles(files: File[], onProgress?: (frac: number) => 
     for (const f of files) form.append('files', f, f.name)
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${API_BASE}/api/files`)
+    xhr.withCredentials = true
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
     }
@@ -97,13 +156,13 @@ export async function uploadFiles(files: File[], onProgress?: (frac: number) => 
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(JSON.parse(xhr.responseText) as FileOut[])
       } else {
-        let detail = xhr.statusText
+        let body: unknown = null
         try {
-          detail = JSON.parse(xhr.responseText).detail ?? detail
+          body = JSON.parse(xhr.responseText)
         } catch {
-          /* ignore */
+          /* not JSON */
         }
-        reject(new ApiError(xhr.status, detail))
+        reject(apiErrorFrom(xhr.status, body, xhr.statusText || 'Upload failed'))
       }
     }
     xhr.onerror = () => reject(new ApiError(0, 'Network error'))
@@ -112,41 +171,35 @@ export async function uploadFiles(files: File[], onProgress?: (frac: number) => 
 }
 
 export async function getFile(fileId: string): Promise<FileOut> {
-  return handle(await fetch(`${API_BASE}/api/files/${fileId}`))
+  return handle(await apiFetch(`/api/files/${fileId}`))
 }
 
 export async function getPdfInfo(fileId: string, password?: string): Promise<PdfInfo> {
   const q = password ? `?password=${encodeURIComponent(password)}` : ''
-  return handle(await fetch(`${API_BASE}/api/files/${fileId}/pdf-info${q}`))
+  return handle(await apiFetch(`/api/files/${fileId}/pdf-info${q}`))
 }
 
 export async function getThumbnails(fileId: string, width = 160): Promise<string[]> {
-  return handle(await fetch(`${API_BASE}/api/files/${fileId}/thumbnails?width=${width}`))
+  return handle(await apiFetch(`/api/files/${fileId}/thumbnails?width=${width}`))
 }
 
 export async function searchPdf(fileId: string, q: string) {
   return handle<{ query: string; count: number; hits: { page: number; x0: number; y0: number; x1: number; y1: number }[] }>(
-    await fetch(`${API_BASE}/api/files/${fileId}/search?q=${encodeURIComponent(q)}`),
+    await apiFetch(`/api/files/${fileId}/search?q=${encodeURIComponent(q)}`),
   )
 }
 
 export async function deleteFile(fileId: string): Promise<void> {
-  await handle<void>(await fetch(`${API_BASE}/api/files/${fileId}`, { method: 'DELETE' }))
+  await handle<void>(await apiFetch(`/api/files/${fileId}`, { method: 'DELETE' }))
 }
 
 /** POST JSON to a tool endpoint. Returns either a ToolResult or a JobOut. */
 export async function postJson<T = ToolResult | JobOut>(path: string, body: unknown): Promise<T> {
-  return handle(
-    await fetch(`${API_BASE}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
-  )
+  return sendJson<T>('POST', path, body)
 }
 
 export async function getJob(jobId: string): Promise<JobOut> {
-  return handle(await fetch(`${API_BASE}/api/jobs/${jobId}`))
+  return handle(await apiFetch(`/api/jobs/${jobId}`))
 }
 
 export function isJob(x: unknown): x is JobOut {
@@ -170,14 +223,27 @@ export async function runTool(
     await new Promise((r) => setTimeout(r, 500))
     job = await getJob(job.job_id)
   }
-  if (job.state === 'error') throw new ApiError(500, job.error ?? 'Job failed')
+  if (job.state === 'error') {
+    // Jobs may fail with a structured gating error (serialised as JSON in `error`).
+    const raw = job.error ?? 'Job failed'
+    if (raw.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        const status = parsed.code === 'daily_limit' ? 429 : parsed.code === 'file_too_large' ? 413 : parsed.code === 'upgrade_required' ? 402 : 500
+        throw apiErrorFrom(status, { detail: parsed }, raw)
+      } catch (e) {
+        if (e instanceof ApiError) throw e
+      }
+    }
+    throw new ApiError(500, raw)
+  }
   onProgress?.(1, 'Done')
   return job.result!
 }
 
 export async function health() {
   return handle<{ status: string; libreoffice: boolean; tesseract: boolean; pymupdf: string }>(
-    await fetch(`${API_BASE}/api/health`),
+    await apiFetch('/api/health'),
   )
 }
 
