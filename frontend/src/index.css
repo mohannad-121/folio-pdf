@@ -445,3 +445,90 @@
 .textLayer .highlight.selected {
   background: rgba(255, 140, 0, 0.6);
 }
+
+/* ---- 3D icon tiles (components/Icon3D.tsx) ---------------------------------------------------
+   The parent may set --rx / --ry (degrees) to steer the tilt, e.g. from pointer position. */
+.i3d {
+  position: relative;
+  display: inline-block;
+  width: var(--size, 52px);
+  height: var(--size, 52px);
+  perspective: calc(var(--size, 52px) * 9);
+  flex-shrink: 0;
+}
+.i3d-stage,
+.i3d-side,
+.i3d-face,
+.i3d-glyph,
+.i3d-glyph-back {
+  position: absolute;
+  inset: 0;
+  border-radius: 27%;
+}
+.i3d-stage {
+  transform-style: preserve-3d;
+  transform: rotateX(var(--rx, 14deg)) rotateY(var(--ry, -16deg));
+  transition: transform 420ms var(--ease-spring);
+  will-change: transform;
+}
+.group:hover .i3d-stage,
+.i3d:hover .i3d-stage {
+  transform: rotateX(var(--rx, -4deg)) rotateY(var(--ry, 18deg)) scale(1.06);
+}
+.i3d-side {
+  background: var(--c7);
+  transform: translateZ(var(--z));
+  filter: brightness(0.92);
+}
+.i3d-face {
+  background: linear-gradient(148deg, var(--c4) 0%, var(--c5) 42%, var(--c6) 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.5),
+    inset 0 -3px 6px rgb(0 0 0 / 0.18),
+    inset 1px 0 0 rgb(255 255 255 / 0.18);
+  transform: translateZ(0.5px);
+}
+.i3d-gloss {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(130% 90% at 22% 12%, rgb(255 255 255 / 0.6), rgb(255 255 255 / 0.1) 40%, transparent 62%),
+    linear-gradient(180deg, transparent 55%, rgb(0 0 0 / 0.08));
+}
+.i3d-glyph,
+.i3d-glyph-back {
+  display: grid;
+  place-items: center;
+}
+.i3d-glyph {
+  color: #fff;
+  transform: translateZ(calc(var(--size, 52px) * 0.26));
+  filter: drop-shadow(0 2px 1px rgb(0 0 0 / 0.28));
+}
+.i3d-glyph-back {
+  color: var(--c7);
+  transform: translateZ(calc(var(--size, 52px) * 0.14)) translate(1px, 2px);
+  opacity: 0.85;
+}
+.i3d-shadow {
+  position: absolute;
+  inset: 18% 8% -12% 8%;
+  border-radius: 40%;
+  background: color-mix(in oklab, var(--c6) 60%, transparent);
+  filter: blur(calc(var(--size, 52px) * 0.18));
+  transform: translateY(calc(var(--size, 52px) * 0.18)) scale(0.9);
+  transition: transform 420ms var(--ease-spring), opacity 300ms;
+  opacity: 0.7;
+}
+.group:hover .i3d-shadow,
+.i3d:hover .i3d-shadow {
+  transform: translateY(calc(var(--size, 52px) * 0.28)) scale(1);
+  opacity: 0.9;
+}
+@media (prefers-reduced-motion: reduce) {
+  .i3d-stage,
+  .i3d-shadow {
+    transition: none;
+  }
+}
