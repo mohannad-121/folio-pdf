@@ -1,0 +1,149 @@
+/* Viewer-specific styles. Tailwind handles most of the UI; this file covers the
+   pdf.js text layer (v6 variables), tooltips and cursors. */
+
+.v-tip[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 60;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #fff;
+  background: rgba(23, 23, 23, 0.95);
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.12s ease 0.25s, transform 0.12s ease 0.25s;
+}
+.v-tip[data-tip-side="bottom"]::after { top: calc(100% + 6px); left: 50%; transform: translate(-50%, 2px); }
+.v-tip[data-tip-side="top"]::after { bottom: calc(100% + 6px); left: 50%; transform: translate(-50%, -2px); }
+.v-tip[data-tip-side="right"]::after { left: calc(100% + 6px); top: 50%; transform: translate(2px, -50%); }
+.v-tip[data-tip-side="left"]::after { right: calc(100% + 6px); top: 50%; transform: translate(-2px, -50%); }
+.v-tip:hover::after, .v-tip:focus-visible::after { opacity: 1; }
+.v-tip[data-tip-side="bottom"]:hover::after { transform: translate(-50%, 0); }
+.v-tip[data-tip-side="top"]:hover::after { transform: translate(-50%, 0); }
+.v-tip[data-tip-side="right"]:hover::after { transform: translate(0, -50%); }
+.v-tip[data-tip-side="left"]:hover::after { transform: translate(0, -50%); }
+
+/* pdf.js v6 text layer: complete the rules from pdf_viewer.css that index.css
+   does not include. --total-scale-factor is set inline per page. */
+.textLayer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  z-index: 1;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+  user-select: text;
+}
+.textLayer .markedContent { display: contents; }
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent { top: 0; }
+.v-page.mode-select .textLayer, .v-page.mode-markup .textLayer { pointer-events: auto; }
+.v-page:not(.mode-select):not(.mode-markup) .textLayer { pointer-events: none; }
+.v-page.mode-hand .textLayer span { cursor: grab; }
+
+/* Page element */
+.v-page {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 8px 24px -12px rgba(0, 0, 0, 0.35);
+  user-select: none;
+}
+.v-page canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.v-page.mode-markup { cursor: text; }
+.v-page.mode-draw { cursor: crosshair; }
+.v-page.mode-eraser { cursor: cell; }
+.v-page.mode-shape, .v-page.mode-redact, .v-page.mode-link, .v-page.mode-image { cursor: crosshair; }
+.v-page.mode-text, .v-page.mode-note, .v-page.mode-sign { cursor: copy; }
+.v-page.mode-edit-text { cursor: default; }
+.v-page.mode-hand { cursor: grab; }
+.v-page.mode-hand:active { cursor: grabbing; }
+
+/* Overlay */
+.v-overlay { position: absolute; inset: 0; z-index: 2; overflow: visible; }
+.v-overlay.passthrough { pointer-events: none; }
+.v-overlay.passthrough > * { pointer-events: auto; }
+.v-overlay.capture { pointer-events: auto; }
+.v-overlay.capture:not(.ops-interactive) .v-op { pointer-events: none; }
+.v-overlay.capture .v-op textarea, .v-overlay.capture .v-op input, .v-overlay.capture .v-op button, .v-overlay.capture .v-op select { pointer-events: auto; }
+.v-overlay svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.v-op { position: absolute; }
+.v-op.movable { cursor: move; }
+.v-op.selected { outline: 1.5px solid #355cff; outline-offset: 1px; }
+.v-op:not(.selected):hover { outline: 1px dashed rgba(53, 92, 255, 0.6); outline-offset: 1px; }
+.v-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1.5px solid #355cff;
+  border-radius: 2px;
+  box-sizing: border-box;
+  z-index: 3;
+}
+.v-handle.nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.v-handle.ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.v-handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.v-handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.v-handle.n { left: calc(50% - 4.5px); top: -5px; cursor: ns-resize; }
+.v-handle.s { left: calc(50% - 4.5px); bottom: -5px; cursor: ns-resize; }
+.v-handle.w { left: -5px; top: calc(50% - 4.5px); cursor: ew-resize; }
+.v-handle.e { right: -5px; top: calc(50% - 4.5px); cursor: ew-resize; }
+.v-handle.round { border-radius: 50%; }
+
+.v-highlight-multiply { mix-blend-mode: multiply; }
+
+.v-annot-outline { position: absolute; border: 1px solid transparent; cursor: pointer; }
+.v-annot-outline:hover { border-color: rgba(53, 92, 255, 0.7); background: rgba(53, 92, 255, 0.06); }
+.v-annot-outline.selected { border: 1.5px solid #355cff; background: rgba(53, 92, 255, 0.08); }
+.v-annot-outline.deleted { border: 1.5px dashed #dc2626; background: repeating-linear-gradient(45deg, rgba(220,38,38,0.12) 0 6px, transparent 6px 12px); }
+
+.v-line-box { position: absolute; border: 1px solid transparent; border-radius: 1px; }
+.v-line-box:hover { border-color: rgba(53, 92, 255, 0.8); background: rgba(53, 92, 255, 0.07); cursor: text; }
+
+.v-search-hit { position: absolute; background: rgba(255, 220, 0, 0.45); border-radius: 2px; pointer-events: none; }
+.v-search-hit.current { background: rgba(255, 140, 0, 0.65); outline: 1.5px solid #f97316; }
+
+.v-redact-pending { position: absolute; background: #000; outline: 1.5px solid #ef4444; }
+.v-redact-match { position: absolute; border: 1.5px solid #ef4444; background: rgba(239, 68, 68, 0.2); }
+
+.v-forms-input {
+  position: absolute;
+  font: inherit;
+  padding: 0 2px;
+  box-sizing: border-box;
+  border: 1px solid rgba(53, 92, 255, 0.5);
+  background: rgba(221, 232, 255, 0.85);
+  color: #111;
+  outline: none;
+  border-radius: 1px;
+}
+.v-forms-input:focus { border-color: #355cff; background: #fff; box-shadow: 0 0 0 2px rgba(53, 92, 255, 0.3); }
+
+.v-thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+
+@media (prefers-color-scheme: dark) {
+  .v-page { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 8px 24px -12px rgba(0, 0, 0, 0.8); }
+}
+
+.v-scroll { scrollbar-gutter: stable; }
+.v-fade-in { animation: v-fade 0.15s ease-out; }
+@keyframes v-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
