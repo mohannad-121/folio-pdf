@@ -35,7 +35,6 @@ fileAssociations:
     mimeType: application/pdf
     role: Editor
     rank: Alternate
-    icon: icon
 
 publish:
   - provider: github
