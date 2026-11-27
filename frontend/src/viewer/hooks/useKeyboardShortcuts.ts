@@ -25,6 +25,7 @@ const MODE_KEYS: Record<string, Mode> = {
   l: 'link',
   r: 'redact',
   s: 'sign',
+  p: 'stamp',
   f: 'forms',
   o: 'organize',
 }

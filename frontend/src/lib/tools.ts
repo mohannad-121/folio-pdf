@@ -418,9 +418,9 @@ export const TOOLS: ToolDef[] = [
   {
     id: 'watermark',
     name: 'Add Watermark',
-    description: 'Stamp text or an image over or under every page.',
+    description: 'Put text or an image over or under every page.',
     category: 'edit',
-    icon: 'Stamp',
+    icon: 'Droplets',
     input: { kind: 'pdf', multiple: true },
     endpoint: '/api/edit/watermark',
     options: [
@@ -654,6 +654,16 @@ export const TOOLS: ToolDef[] = [
     endpoint: '/api/sign/stamp',
     opensViewer: true,
     featured: true,
+  },
+  {
+    id: 'stamp',
+    name: 'Stamp PDF',
+    description: 'Stamp pages with APPROVED, PAID, RECEIVED or your own text, with the date and your name.',
+    category: 'forms-sign',
+    icon: 'Stamp',
+    input: { kind: 'pdf' },
+    endpoint: '/api/edit/apply',
+    opensViewer: true,
   },
   {
     id: 'digital-sign',

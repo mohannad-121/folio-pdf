@@ -132,6 +132,7 @@ export function opLabel(op: EditOp): string {
     move_page: 'Move page',
     form_value: 'Form value',
     signature: 'Signature',
+    stamp: 'Stamp',
     crop_page: 'Crop page',
     set_metadata: 'Document info',
   }
@@ -154,6 +155,8 @@ export function opSummary(op: EditOp): string {
       return `${op.angle}°`
     case 'set_metadata':
       return op.title
+    case 'stamp':
+      return op.subtext ? `${op.text} · ${op.subtext}` : op.text
     default:
       return ''
   }
@@ -169,5 +172,6 @@ export function opColor(op: EditOp): string | null {
 
 /** Serialise for the API (strip client ids). */
 export function serializeOps(ops: PendingOp[]): EditOp[] {
-  return ops.map((p) => p.op)
+  // A stamp whose text was cleared would fail validation for the whole request; drop it instead.
+  return ops.map((p) => p.op).filter((op) => op.type !== 'stamp' || op.text.trim() !== '')
 }

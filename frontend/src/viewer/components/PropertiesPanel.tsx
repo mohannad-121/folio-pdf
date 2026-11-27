@@ -187,6 +187,20 @@ function OpProps({ id, op }: { id: string; op: EditOp }) {
           {op.remove_xref != null && <div className="text-[11px] text-neutral-500">Replaces existing link #{op.remove_xref}.</div>}
         </>
       )}
+      {op.type === 'stamp' && (
+        <>
+          <Field label="Stamp text">
+            <input value={op.text} maxLength={60} onChange={(e) => update({ text: e.target.value.toUpperCase() } as Partial<EditOp>)} className={clsx(inputCls, 'font-semibold uppercase')} />
+          </Field>
+          <Field label="Second line">
+            <input value={op.subtext ?? ''} maxLength={120} onChange={(e) => update({ subtext: e.target.value || undefined } as Partial<EditOp>)} placeholder="Date, name…" className={inputCls} />
+          </Field>
+          <Field label={`Tilt ${op.rotate}°`}>
+            <input type="range" min={-30} max={30} step={1} value={op.rotate} onChange={(e) => update({ rotate: Number(e.target.value) } as Partial<EditOp>)} className="accent-brand-600" />
+          </Field>
+          {!op.text.trim() && <div className="text-[11px] text-red-600">A stamp needs text; empty stamps are skipped on save.</div>}
+        </>
+      )}
       {op.type === 'image' && (
         <Field label="Rotation" inline>
           <select value={op.rotate} onChange={(e) => update({ rotate: Number(e.target.value) } as Partial<EditOp>)} className={clsx(inputCls, 'w-24')}>

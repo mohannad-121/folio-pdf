@@ -23,6 +23,7 @@ import {
   Scissors,
   Search,
   Square,
+  Stamp,
   StickyNote,
   Strikethrough,
   TextCursorInput,
@@ -34,7 +35,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { FONT_OPTIONS } from '../fonts'
-import { INK_COLORS, MARKUP_COLORS, useDirtyCount, useViewer } from '../store'
+import { INK_COLORS, MARKUP_COLORS, STAMP_PRESETS, stampSubtext, useDirtyCount, useViewer } from '../store'
 import type { FieldType, FontName, MarkupType, Mode, ShapeType } from '../types'
 import { ColorSwatches, Divider, IconButton, Toggle, inputCls } from './ui'
 
@@ -94,6 +95,7 @@ export default function Toolbar({ actions }: { actions: ToolbarActions }) {
         <Divider />
         {m('redact', 'Redact', <Scissors size={17} />, 'R')}
         {m('sign', 'Sign', <FileSignature size={17} />, 'S')}
+        {m('stamp', 'Stamp', <Stamp size={17} />, 'P')}
         {m('forms', hasForms ? 'Fill & edit forms' : 'Add form fields', <FormInput size={17} />, 'F')}
         {m('organize', 'Organize pages', <LayoutGrid size={17} />, 'O')}
         <span className="flex-1" />
@@ -299,6 +301,12 @@ function ModeOptions() {
         </div>
       )
     }
+    case 'stamp':
+      return (
+        <div className={row}>
+          <StampControls />
+        </div>
+      )
     case 'forms': {
       const types: { t: FieldType; label: string }[] = [
         { t: 'text', label: 'Text' },
@@ -329,6 +337,64 @@ function ModeOptions() {
   }
 }
 
+const STAMP_COLORS = ['#16a34a', '#dc2626', '#2563eb', '#7c3aed', '#0891b2', '#525252']
+
+function StampControls() {
+  const st = useViewer((s) => s.stamp)
+  const set = useViewer((s) => s.setStamp)
+  const isPreset = STAMP_PRESETS.some((p) => p.text === st.text)
+  const sub = stampSubtext(st)
+  return (
+    <>
+      <select
+        aria-label="Stamp preset"
+        value={isPreset ? st.text : ''}
+        onChange={(e) => {
+          const p = STAMP_PRESETS.find((x) => x.text === e.target.value)
+          set(p ? { text: p.text, color: p.color } : { text: '' })
+        }}
+        className={clsx(inputCls, 'h-7 w-36 max-w-36 shrink-0 py-0 text-xs')}
+      >
+        {STAMP_PRESETS.map((p) => (
+          <option key={p.text} value={p.text}>
+            {p.text}
+          </option>
+        ))}
+        <option value="">Custom…</option>
+      </select>
+      <input
+        aria-label="Stamp text"
+        value={st.text}
+        maxLength={60}
+        onChange={(e) => set({ text: e.target.value.toUpperCase() })}
+        onKeyDown={(e) => e.stopPropagation()}
+        placeholder="Your stamp text"
+        className={clsx(inputCls, 'h-7 w-36 max-w-36 shrink-0 py-0 text-xs font-semibold uppercase')}
+      />
+      <ColorSwatches colors={STAMP_COLORS} value={st.color} onChange={(c) => set({ color: c })} size="sm" />
+      <label className="flex shrink-0 items-center gap-1">
+        <input type="checkbox" checked={st.date} onChange={(e) => set({ date: e.target.checked })} className="accent-brand-600" />
+        Date
+      </label>
+      <input
+        aria-label="Name on stamp"
+        value={st.name}
+        maxLength={40}
+        onChange={(e) => set({ name: e.target.value })}
+        onKeyDown={(e) => e.stopPropagation()}
+        placeholder="Name (optional)"
+        className={clsx(inputCls, 'h-7 w-32 max-w-32 shrink-0 py-0 text-xs')}
+      />
+      <label className="flex shrink-0 items-center gap-1">
+        Tilt
+        <input type="range" min={-30} max={30} step={1} value={st.rotate} onChange={(e) => set({ rotate: Number(e.target.value) })} className="w-20 accent-brand-600" />
+        <span className="w-8 tabular-nums">{st.rotate}°</span>
+      </label>
+      <span className="truncate text-neutral-400">{st.text.trim() ? `Click the page to stamp${sub ? ` (${sub})` : ''}` : 'Type the stamp text'}</span>
+    </>
+  )
+}
+
 function OpacityControl() {
   const style = useViewer((s) => s.style)
   const setStyle = useViewer((s) => s.setStyle)
@@ -352,7 +418,7 @@ function FontControls() {
   }
   return (
     <>
-      <select value={style.font} onChange={(e) => setStyle({ font: e.target.value as FontName })} className={clsx(inputCls, 'h-7 w-36 py-0 text-xs')}>
+      <select value={style.font} onChange={(e) => setStyle({ font: e.target.value as FontName })} className={clsx(inputCls, 'h-7 w-36 max-w-36 shrink-0 py-0 text-xs')}>
         {FONT_OPTIONS.map((f) => (
           <option key={f.v} value={f.v}>
             {f.label}

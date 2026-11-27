@@ -28,6 +28,7 @@ const TOOL_MODES: Record<string, Mode> = {
   edit: 'select',
   view: 'select',
   sign: 'sign',
+  stamp: 'stamp',
   redact: 'redact',
   organize: 'organize',
   'fill-form': 'forms',

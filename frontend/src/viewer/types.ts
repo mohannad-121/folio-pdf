@@ -39,6 +39,8 @@ export type EditOp =
   | (PageOp & { type: 'insert_blank_page'; after_page: number })
   | (PageOp & { type: 'move_page'; to: number })
   | (PageOp & { type: 'form_value'; field_name: string; value: string | boolean })
+  /** Rubber stamp baked into the page. `rotate` is the tilt in degrees, clockwise (-45..45). */
+  | (PageOp & { type: 'stamp'; rect: RectT; text: string; subtext?: string; color: string; opacity: number; rotate: number })
   | (PageOp & { type: 'signature'; rect: RectT; image_file_id: string })
   | (PageOp & { type: 'crop_page'; rect: RectT })
   | { type: 'set_metadata'; title: string; author: string; subject: string; keywords: string }
@@ -155,6 +157,7 @@ export type Mode =
   | 'link'
   | 'redact'
   | 'sign'
+  | 'stamp'
   | 'forms'
   | 'organize'
 

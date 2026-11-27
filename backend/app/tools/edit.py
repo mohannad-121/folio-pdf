@@ -560,6 +560,19 @@ class ImageOp(_PageOp):
     keep_proportion: bool = True
 
 
+class StampOp(_PageOp):
+    """A rubber stamp (e.g. APPROVED / PAID) baked into the page: rounded double border, bold label and
+    an optional second line such as the date and name. ``rotate`` tilts it (degrees, clockwise)."""
+
+    type: Literal["stamp"]
+    rect: Rect4
+    text: str = Field(min_length=1, max_length=60)
+    subtext: str | None = Field(default=None, max_length=120)
+    color: str = "#dc2626"
+    opacity: float = Field(default=0.9, ge=0.05, le=1)
+    rotate: float = Field(default=0, ge=-45, le=45)
+
+
 class DeleteImageOp(_PageOp):
     type: Literal["delete_image"]
     xref: int
@@ -674,6 +687,7 @@ EditOp = Annotated[
     | FreeTextOp
     | TextOp
     | ImageOp
+    | StampOp
     | DeleteImageOp
     | ReplaceImageOp
     | LinkOp
@@ -855,6 +869,92 @@ def _op_image(ctx: _Ctx, op: ImageOp):
     place_image(page, R(op.rect), store.path(op.image_file_id), rotate=op.rotate, keep=op.keep_proportion)
     if op.type == "signature":
         ctx.signatures += 1
+
+
+def _stamp_line(page: pymupdf.Page, text: str, cx: float, base: float, size: float, rgb, opacity: float) -> None:
+    """One centred line of stamp text with its baseline at ``base``. Right-to-left scripts go through
+    ``insert_htmlbox`` (HarfBuzz shaping + bidi); everything else through ``insert_text``."""
+    if _has_rtl(text):
+        from html import escape
+
+        hexcol = "#" + "".join(f"{round(v * 255):02x}" for v in rgb)
+        box = pymupdf.Rect(0, base - size * 1.05, page.rect.width, base + size * 0.45)
+        css = f"margin:0;text-align:center;font-weight:bold;font-size:{size:.2f}px;color:{hexcol}"
+        html = f'<p style="{css}">{escape(text)}</p>'
+        page.insert_htmlbox(box, html, opacity=opacity)
+        return
+    fk = font_kwargs(text, "hebo")
+    tl = _text_length(text, fk, size)
+    page.insert_text((cx - tl / 2, base), text, fontsize=size, color=rgb, fill_opacity=opacity, **fk)
+
+
+def _stamp_size(text: str, avail_w: float, cap_h: float) -> float:
+    if _has_rtl(text):
+        return min(cap_h, avail_w / max(len(text) * 0.55, 1))  # htmlbox shrinks it further if needed
+    return min(cap_h, avail_w / max(_text_length(text, font_kwargs(text, "hebo"), 1), 0.01))
+
+
+def draw_stamp(
+    page: pymupdf.Page,
+    rect: pymupdf.Rect,
+    text: str,
+    subtext: str | None = None,
+    color: str = "#dc2626",
+    opacity: float = 0.9,
+    tilt: float = 0,
+) -> None:
+    """Draw a rubber stamp filling ``rect`` (displayed space), tilted ``tilt`` degrees clockwise.
+
+    The stamp is drawn upright on a scratch page of the stamp's size, then placed with
+    ``show_pdf_page``, which handles the tilt and the target page's rotation in one go. Text is sized
+    to fit the box, so any label length works."""
+    rgb = hex_to_rgb(color) or (0.86, 0.15, 0.15)
+    w, h = rect.width, rect.height
+    if w < 8 or h < 8:
+        raise ValueError("stamp is too small")
+    src = pymupdf.open()
+    try:
+        sp = src.new_page(width=w, height=h)
+        bw = max(1.0, min(w, h) * 0.045)
+        shape = sp.new_shape()
+        shape.draw_rect(pymupdf.Rect(bw / 2, bw / 2, w - bw / 2, h - bw / 2), radius=0.18)
+        shape.finish(color=rgb, width=bw, stroke_opacity=opacity)
+        inner = pymupdf.Rect(bw * 2.4, bw * 2.4, w - bw * 2.4, h - bw * 2.4)
+        if not inner.is_empty:
+            shape.draw_rect(inner, radius=0.14)
+            shape.finish(color=rgb, width=bw * 0.45, stroke_opacity=opacity)
+        shape.commit()
+
+        label = text.strip().upper()
+        sub = (subtext or "").strip()
+        pad = bw * 4.5
+        avail_w, avail_h = max(4.0, w - 2 * pad), max(4.0, h - 2 * pad)
+        size = _stamp_size(label, avail_w, avail_h * (0.58 if sub else 0.8))
+        sub_size = min(size * 0.45, _stamp_size(sub, avail_w, avail_h * 0.24)) if sub else 0.0
+        cap = 0.72  # cap height as a fraction of the font size
+        gap = sub_size * 0.75
+        block = size * cap + (gap + sub_size * cap if sub else 0)
+        base = h / 2 - block / 2 + size * cap
+        _stamp_line(sp, label, w / 2, base, size, rgb, opacity)
+        if sub:
+            _stamp_line(sp, sub, w / 2, base + gap + sub_size * cap, sub_size, rgb, opacity)
+
+        # Target = the tilted stamp's bounding box, centred on the requested rect; show_pdf_page scales
+        # the rotated source to fit it exactly. Its rotate is counter-clockwise, ours clockwise.
+        import math
+
+        a = math.radians(tilt)
+        bw_, bh_ = w * abs(math.cos(a)) + h * abs(math.sin(a)), w * abs(math.sin(a)) + h * abs(math.cos(a))
+        c = (rect.tl + rect.br) / 2
+        target = pymupdf.Rect(c.x - bw_ / 2, c.y - bh_ / 2, c.x + bw_ / 2, c.y + bh_ / 2)
+        page.show_pdf_page(to_page_space(page, target), src, 0, rotate=page.rotation - tilt, overlay=True)
+    finally:
+        src.close()
+
+
+def _op_stamp(ctx: _Ctx, op: StampOp):
+    ctx.flush_redactions(op.page)
+    draw_stamp(ctx.page(op.page), R(op.rect), op.text, op.subtext, op.color, op.opacity, op.rotate)
 
 
 def _op_delete_image(ctx: _Ctx, op: DeleteImageOp):
@@ -1061,6 +1161,7 @@ _HANDLERS = {
     "text": _op_text,
     "image": _op_image,
     "signature": _op_image,
+    "stamp": _op_stamp,
     "delete_image": _op_delete_image,
     "replace_image": _op_replace_image,
     "link": _op_link,

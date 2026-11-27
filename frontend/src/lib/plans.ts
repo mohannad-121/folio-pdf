@@ -112,7 +112,7 @@ const PLUS_TOOLS = [
   'word-to-pdf', 'excel-to-pdf', 'powerpoint-to-pdf', 'images-to-pdf', 'html-to-pdf', 'scan-to-pdf',
   'pdf-to-word', 'pdf-to-excel', 'pdf-to-powerpoint', 'pdf-to-jpg', 'pdf-to-png', 'pdf-to-html',
   'edit', 'watermark', 'page-numbers', 'header-footer', 'background', 'metadata', 'bookmarks',
-  'repair', 'flatten', 'grayscale', 'protect', 'unlock', 'sanitize', 'sign', 'fill-form', 'form-data', 'accessibility',
+  'repair', 'flatten', 'grayscale', 'protect', 'unlock', 'sanitize', 'sign', 'stamp', 'fill-form', 'form-data', 'accessibility',
 ]
 const PRO_TOOLS = ['ocr', 'redact', 'compare', 'digital-sign', 'pdf-to-pdfa']
 
@@ -126,6 +126,7 @@ export const FALLBACK_OP_TIERS: Record<string, Tier> = {
   replace_text: 'plus',
   image: 'plus',
   signature: 'plus',
+  stamp: 'plus',
   redact: 'pro',
   form_field: 'pro',
 }

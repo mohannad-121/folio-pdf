@@ -9,13 +9,13 @@ import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'reac
 import { downloadUrl } from '../../lib/api'
 import { clampRect, cssRectToPdf, cssToPdf, normRect, pdfRectToCss, pdfToCss, roundRect, type CssRect, type PageGeom } from '../coords'
 import { canMove, canResize, isVisualOp, opBounds, resizeOp, translateOp } from '../ops'
-import { useViewer } from '../store'
+import { stampSubtext, useViewer } from '../store'
 import { fontFamily } from '../fonts'
 import type { EditOp, FieldType, PendingOp, PointT, RectT } from '../types'
 
-const CAPTURE_MODES = new Set(['draw', 'eraser', 'shape', 'text', 'note', 'image', 'link', 'redact', 'sign'])
+const CAPTURE_MODES = new Set(['draw', 'eraser', 'shape', 'text', 'note', 'image', 'link', 'redact', 'sign', 'stamp'])
 /** Placement modes: existing pending ops remain clickable/movable while the tool is active. */
-const OPS_INTERACTIVE_MODES = new Set(['text', 'note', 'image', 'link', 'sign'])
+const OPS_INTERACTIVE_MODES = new Set(['text', 'note', 'image', 'link', 'sign', 'stamp'])
 
 type Draft =
   | { kind: 'rect'; start: PointT; current: PointT }
@@ -107,6 +107,9 @@ export default function OverlayLayer({ page, geom, cssW, cssH }: Props) {
         break
       case 'sign':
         placeSignature(pdfP)
+        break
+      case 'stamp':
+        placeStamp(pdfP)
         break
     }
   }
@@ -233,6 +236,22 @@ export default function OverlayLayer({ page, geom, cssW, cssH }: Props) {
     const h = w / aspect
     const rect = clampRect(geom, roundRect([pdfP[0] - w / 2, pdfP[1] - h / 2, pdfP[0] + w / 2, pdfP[1] + h / 2]))
     s.addOp({ type: 'signature', page, rect, image_file_id: sig.file_id })
+  }
+
+  const placeStamp = (pdfP: PointT) => {
+    const s = useViewer.getState()
+    const st = s.stamp
+    const text = st.text.trim().toUpperCase()
+    if (!text) {
+      s.notify('info', 'Type the stamp text first')
+      return
+    }
+    const subtext = stampSubtext(st)
+    // Size from the label (≈15pt per character at the default size), bounded to the page.
+    const w = Math.min(geom.width * 0.7, Math.max(110, text.length * 15 + 36, subtext ? subtext.length * 5.5 + 36 : 0))
+    const h = subtext ? 62 : 48
+    const rect = clampRect(geom, roundRect([pdfP[0] - w / 2, pdfP[1] - h / 2, pdfP[0] + w / 2, pdfP[1] + h / 2]))
+    s.addOp({ type: 'stamp', page, rect, text, ...(subtext ? { subtext } : {}), color: st.color, opacity: st.opacity, rotate: st.rotate })
   }
 
   const onBackgroundClick = (e: React.MouseEvent) => {
@@ -637,6 +656,8 @@ function OpBody({ op, geom, box, pad, id, selected }: { op: EditOp; geom: PageGe
     case 'image':
     case 'signature':
       return <img src={downloadUrl(op.image_file_id, true)} alt="" draggable={false} className="absolute inset-0 h-full w-full select-none object-contain" style={op.type === 'image' && op.rotate ? { transform: `rotate(${op.rotate}deg)` } : undefined} />
+    case 'stamp':
+      return <StampBody op={op} />
     case 'link':
       return <LinkBody op={op} id={id} selected={selected} />
     case 'redact':
@@ -652,6 +673,44 @@ function OpBody({ op, geom, box, pad, id, selected }: { op: EditOp; geom: PageGe
     default:
       return null
   }
+}
+
+/**
+ * Preview of a rubber stamp. Mirrors the backend's draw_stamp layout (border widths, padding, font
+ * sizes as fractions of the box) in an SVG whose viewBox is the stamp's size in PDF points.
+ */
+function StampBody({ op }: { op: Extract<EditOp, { type: 'stamp' }> }) {
+  const w = Math.max(1, op.rect[2] - op.rect[0])
+  const h = Math.max(1, op.rect[3] - op.rect[1])
+  const bw = Math.max(1, Math.min(w, h) * 0.045)
+  const pad = bw * 4.5
+  const availW = Math.max(4, w - 2 * pad)
+  const availH = Math.max(4, h - 2 * pad)
+  const label = op.text.trim().toUpperCase()
+  const sub = op.subtext?.trim() ?? ''
+  // Helvetica-Bold averages ~0.68em per upper-case glyph and ~0.58em for mixed text.
+  const size = Math.min(availH * (sub ? 0.58 : 0.8), availW / Math.max(label.length * 0.68, 0.01))
+  const subSize = sub ? Math.min(availH * 0.24, size * 0.45, availW / Math.max(sub.length * 0.58, 0.01)) : 0
+  const cap = 0.72
+  const gap = subSize * 0.75
+  const block = size * cap + (sub ? gap + subSize * cap : 0)
+  const base = h / 2 - block / 2 + size * cap
+  const r = Math.min(w, h)
+  const inset = bw * 2.4
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" style={{ transform: op.rotate ? `rotate(${op.rotate}deg)` : undefined, opacity: op.opacity }}>
+      <rect x={bw / 2} y={bw / 2} width={w - bw} height={h - bw} rx={r * 0.18} fill="none" stroke={op.color} strokeWidth={bw} />
+      {w > inset * 2 && h > inset * 2 && <rect x={inset} y={inset} width={w - inset * 2} height={h - inset * 2} rx={r * 0.14} fill="none" stroke={op.color} strokeWidth={bw * 0.45} />}
+      <text x={w / 2} y={base} textAnchor="middle" fill={op.color} fontSize={size} fontWeight={700} fontFamily="Helvetica, Arial, sans-serif">
+        {label}
+      </text>
+      {sub && (
+        <text x={w / 2} y={base + gap + subSize * cap} textAnchor="middle" fill={op.color} fontSize={subSize} fontWeight={700} fontFamily="Helvetica, Arial, sans-serif">
+          {sub}
+        </text>
+      )}
+    </svg>
+  )
 }
 
 function NoteBody({ op, id, selected, pad }: { op: Extract<EditOp, { type: 'note' }>; id: string; selected: boolean; pad: number }) {

@@ -183,6 +183,48 @@ def test_apply_unknown_op_and_strict(client):
     assert r.status_code == 422
 
 
+def test_apply_stamp(client):
+    pdf = upload(client, make_pdf(2))
+    ops = [
+        {
+            "type": "stamp",
+            "page": 1,
+            "rect": [60, 200, 260, 270],
+            "text": "Approved",
+            "subtext": "27 NOV 2026 · Folio",
+            "color": "#16a34a",
+        },
+        {"type": "stamp", "page": 2, "rect": [300, 400, 480, 460], "text": "paid", "rotate": -12, "opacity": 0.6},
+    ]
+    r = client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": ops, "strict": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["applied"] == 2
+    out = open_out(client, r.json())
+    hit = out[0].search_for("APPROVED")  # label is upper-cased
+    assert hit and pymupdf.Rect(60, 200, 260, 270).contains(hit[0])
+    assert out[0].search_for("27 NOV 2026")
+    assert out[1].search_for("PAID")
+    # Validation: empty label and out-of-range tilt are rejected.
+    for bad in ({"text": ""}, {"text": "X", "rotate": 90}):
+        op = {"type": "stamp", "page": 1, "rect": [10, 10, 100, 50], **bad}
+        assert client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": [op]}).status_code == 422
+
+
+@pytest.mark.parametrize("page_rotation", [0, 90, 180, 270])
+def test_stamp_lands_where_placed_on_rotated_pages(page_rotation):
+    from app.tools.edit import draw_stamp, from_page_space
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.set_rotation(page_rotation)
+    target = pymupdf.Rect(100, 150, 300, 230)  # displayed space
+    draw_stamp(page, target, "Received", "2026-11-27", tilt=0)
+    hits = page.search_for("RECEIVED")
+    assert hits
+    shown = from_page_space(page, hits[0])
+    assert target.contains(shown), (shown, target)
+
+
 def test_apply_flatten(client):
     pdf = upload(client, make_pdf(1))
     ops = [{"type": "freetext", "page": 1, "rect": [72, 300, 300, 340], "text": "flat"}]

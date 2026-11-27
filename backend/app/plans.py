@@ -191,6 +191,7 @@ TOOL_TIERS: dict[str, Tier] = {
     "unlock": "plus",
     "sanitize": "plus",
     "sign": "plus",
+    "stamp": "plus",
     "fill-form": "plus",
     "verify-signatures": "plus",
     "remove-annotations": "plus",
@@ -360,6 +361,7 @@ OP_TIERS: dict[str, Tier] = {
     "text": "plus",
     "image": "plus",
     "signature": "plus",
+    "stamp": "plus",
     "delete_image": "plus",
     "replace_image": "plus",
     "link": "plus",
@@ -384,6 +386,7 @@ OP_LABELS = {
     "replace_text": "Editing existing text",
     "image": "Adding images",
     "signature": "Adding signatures",
+    "stamp": "Adding stamps",
     "form_value": "Filling forms",
 }
 

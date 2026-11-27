@@ -44,6 +44,52 @@ export interface ScrollRequest {
 }
 
 export type SignPlacement = 'signature' | 'initials' | 'date'
+
+/** Settings for the next stamp placed in stamp mode (remembered per browser). */
+export interface StampSettings {
+  text: string
+  color: string
+  /** Add today's date on the second line. */
+  date: boolean
+  /** Optional name on the second line ("by …"). */
+  name: string
+  /** Tilt in degrees, clockwise. */
+  rotate: number
+  opacity: number
+}
+
+export const STAMP_PRESETS: { text: string; color: string }[] = [
+  { text: 'APPROVED', color: '#16a34a' },
+  { text: 'REJECTED', color: '#dc2626' },
+  { text: 'PAID', color: '#2563eb' },
+  { text: 'RECEIVED', color: '#7c3aed' },
+  { text: 'REVIEWED', color: '#0891b2' },
+  { text: 'CONFIDENTIAL', color: '#dc2626' },
+  { text: 'DRAFT', color: '#525252' },
+  { text: 'FINAL', color: '#16a34a' },
+  { text: 'VOID', color: '#dc2626' },
+  { text: 'COPY', color: '#525252' },
+]
+
+const STAMP_KEY = 'folio.viewer.stamp'
+const DEFAULT_STAMP: StampSettings = { text: 'APPROVED', color: '#16a34a', date: true, name: '', rotate: -6, opacity: 0.9 }
+
+function loadStamp(): StampSettings {
+  try {
+    const raw = localStorage.getItem(STAMP_KEY)
+    return raw ? { ...DEFAULT_STAMP, ...(JSON.parse(raw) as Partial<StampSettings>) } : DEFAULT_STAMP
+  } catch {
+    return DEFAULT_STAMP
+  }
+}
+
+/** Second line of a stamp for the given settings, e.g. "27 NOV 2026 · Mohannad". */
+export function stampSubtext(st: Pick<StampSettings, 'date' | 'name'>, now = new Date()): string | undefined {
+  const parts: string[] = []
+  if (st.date) parts.push(now.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase())
+  if (st.name.trim()) parts.push(st.name.trim())
+  return parts.length ? parts.join(' · ') : undefined
+}
 export type DialogKind = 'signature' | 'info' | 'readaloud' | 'redact-search' | 'password' | null
 
 interface DocState {
@@ -76,6 +122,7 @@ export interface ViewerState extends DocState {
   textBaked: boolean
   signPlacement: SignPlacement
   activeSignature: SavedSignature | null
+  stamp: StampSettings
   fieldTool: FieldType | null
   pendingImage: { fileId: string; aspect: number } | null
   flattenOnSave: boolean
@@ -122,6 +169,7 @@ export interface ViewerState extends DocState {
   setTextBaked: (b: boolean) => void
   setSignPlacement: (p: SignPlacement) => void
   setActiveSignature: (s: SavedSignature | null) => void
+  setStamp: (patch: Partial<StampSettings>) => void
   setFieldTool: (t: FieldType | null) => void
   setPendingImage: (img: { fileId: string; aspect: number } | null) => void
   setFlattenOnSave: (b: boolean) => void
@@ -208,6 +256,7 @@ export const useViewer = create<ViewerState>()((set, get) => ({
   textBaked: false,
   signPlacement: 'signature',
   activeSignature: null,
+  stamp: loadStamp(),
   fieldTool: null,
   flattenOnSave: false,
   toasts: [],
@@ -248,6 +297,15 @@ export const useViewer = create<ViewerState>()((set, get) => ({
   setTextBaked: (textBaked) => set({ textBaked }),
   setSignPlacement: (signPlacement) => set({ signPlacement }),
   setActiveSignature: (activeSignature) => set({ activeSignature }),
+  setStamp: (patch) => {
+    const stamp = { ...get().stamp, ...patch }
+    set({ stamp })
+    try {
+      localStorage.setItem(STAMP_KEY, JSON.stringify(stamp))
+    } catch {
+      // storage unavailable (private window etc.): settings just aren't remembered
+    }
+  },
   setFieldTool: (fieldTool) => set({ fieldTool }),
   setPendingImage: (pendingImage) => set({ pendingImage }),
   setFlattenOnSave: (flattenOnSave) => set({ flattenOnSave }),
