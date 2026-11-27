@@ -185,7 +185,7 @@ export default function Layout() {
             <div className="flex items-center gap-2">
               <BrandMark size="sm" />
               <span>
-                Folio PDF <span className="text-muted-2">v{VERSION}</span> — open source, self-hosted. Your files never leave your server.
+                Folio PDF <span className="text-muted-2">v{VERSION}</span> — {accounts ? 'every PDF tool in one place. Files are deleted automatically after 24 hours.' : 'open source, self-hosted. Your files never leave your server.'}
               </span>
             </div>
             <div className="flex items-center gap-4">

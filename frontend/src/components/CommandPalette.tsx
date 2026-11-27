@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Clock, CornerDownLeft, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { create } from 'zustand'
-import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, TOOLS_BY_ID, type ToolDef } from '../lib/tools'
+import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, TOOLS_BY_ID, toolsInCategory, type ToolDef } from '../lib/tools'
 import { categoryAccent } from '../lib/theme'
 import ToolIcon from './ToolIcon'
 import { Dialog, Kbd } from './ui'
@@ -87,7 +87,7 @@ function PaletteBody({ close }: { close: () => void }) {
     const recent = recentIds.map((id) => TOOLS_BY_ID[id]).filter((t): t is ToolDef => !!t)
     if (recent.length) out.push({ label: 'Recent', tools: recent })
     out.push({ label: 'Popular', tools: TOOLS.filter((t) => t.featured) })
-    for (const c of CATEGORY_ORDER) out.push({ label: CATEGORY_LABELS[c], tools: TOOLS.filter((t) => t.category === c) })
+    for (const c of CATEGORY_ORDER) out.push({ label: CATEGORY_LABELS[c], tools: toolsInCategory(c) })
     return out
   }, [q, recentIds])
 

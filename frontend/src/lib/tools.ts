@@ -767,17 +767,45 @@ export const TOOLS: ToolDef[] = [
 
 export const TOOLS_BY_ID: Record<string, ToolDef> = Object.fromEntries(TOOLS.map((t) => [t.id, t]))
 
+/**
+ * Display order inside each category: the everyday tools first, niche ones last. Tools missing
+ * here keep their catalog order after the listed ones.
+ */
+const TOOL_ORDER: string[] = [
+  // organize
+  'merge', 'split', 'organize', 'rotate', 'extract-pages', 'delete-pages', 'insert-pages', 'crop', 'page-size',
+  // convert to PDF
+  'word-to-pdf', 'images-to-pdf', 'excel-to-pdf', 'powerpoint-to-pdf', 'scan-to-pdf', 'html-to-pdf', 'text-to-pdf',
+  // convert from PDF
+  'pdf-to-word', 'pdf-to-jpg', 'pdf-to-excel', 'pdf-to-powerpoint', 'pdf-to-png', 'pdf-to-text', 'pdf-to-html', 'pdf-to-pdfa',
+  // edit
+  'edit', 'watermark', 'page-numbers', 'header-footer', 'background', 'bookmarks', 'metadata',
+  // forms & sign
+  'sign', 'fill-form', 'stamp', 'digital-sign', 'verify-signatures', 'form-data',
+  // optimize
+  'compress', 'ocr', 'flatten', 'grayscale', 'repair',
+  // security
+  'protect', 'unlock', 'redact', 'sanitize',
+  // review
+  'view', 'compare', 'inspect', 'accessibility', 'word-count',
+] // prettier-ignore
+
+const TOOL_RANK = new Map(TOOL_ORDER.map((id, i) => [id, i]))
+const rank = (t: ToolDef) => TOOL_RANK.get(t.id) ?? TOOL_ORDER.length + TOOLS.indexOf(t)
+
+/** Tools of a category in display order. */
 export function toolsInCategory(cat: ToolCategory): ToolDef[] {
-  return TOOLS.filter((t) => t.category === cat)
+  return TOOLS.filter((t) => t.category === cat).sort((a, b) => rank(a) - rank(b))
 }
 
+/** Categories in display order, following the most common workflows. */
 export const CATEGORY_ORDER: ToolCategory[] = [
   'organize',
-  'edit',
-  'convert-from',
   'convert-to',
+  'convert-from',
+  'edit',
+  'forms-sign',
   'optimize',
   'security',
-  'forms-sign',
   'review',
 ]

@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import { useAuth, type Me } from '../lib/auth'
 import { formatMb, formatPrice, monthlyEquivalent, tierRank, TIER_META, TIER_ORDER, toolTier, usePlans, yearlySaving, type BillingInterval, type PlanTier, type PlansResponse, type Tier, tierStyle } from '../lib/plans'
 import { openBillingPortal, startCheckout, useCheckout } from '../lib/paddle'
-import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, type ToolCategory } from '../lib/tools'
+import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, toolsInCategory, type ToolCategory } from '../lib/tools'
 import { CATEGORY_META, categoryAccent } from '../lib/theme'
 import { instant, spring, staggerContainer, staggerItem, tween } from '../lib/motion'
 import ToolIcon from '../components/ToolIcon'
@@ -384,7 +384,7 @@ function buildGroups(plans: PlansResponse): Group[] {
     },
   ]
   for (const cat of CATEGORY_ORDER) {
-    const tools = TOOLS.filter((t) => t.category === cat)
+    const tools = toolsInCategory(cat)
     if (!tools.length) continue
     groups.push({
       id: cat,

@@ -137,12 +137,12 @@ const HUES: Record<ToolCategory, string> = {
 /** Editorial copy for category section headers (eyebrow + one-line blurb). */
 export const CATEGORY_META: Record<ToolCategory, { eyebrow: string; blurb: string; icon: string }> = {
   organize: { eyebrow: 'Pages & structure', blurb: 'Merge, split, reorder and reshape documents without opening a desktop app.', icon: 'LayoutGrid' },
-  edit: { eyebrow: 'Content & marks', blurb: 'Stamp, number, annotate and fix what is on the page — or open the full editor.', icon: 'PenTool' },
+  edit: { eyebrow: 'Content & marks', blurb: 'Change text, add watermarks, page numbers and headers — or open the full editor.', icon: 'PenTool' },
   'convert-from': { eyebrow: 'PDF → anything', blurb: 'Turn PDFs into editable Office files, images, HTML, text and archival PDF/A.', icon: 'FileOutput' },
   'convert-to': { eyebrow: 'Anything → PDF', blurb: 'Bring Word, Excel, PowerPoint, images, scans and web pages into clean PDFs.', icon: 'FileInput' },
   optimize: { eyebrow: 'Smaller & smarter', blurb: 'Compress, OCR, repair and flatten so files are lighter and searchable.', icon: 'Gauge' },
-  security: { eyebrow: 'Lock it down', blurb: 'Passwords, permissions, redaction and sanitizing — processed on your own server.', icon: 'ShieldCheck' },
-  'forms-sign': { eyebrow: 'Forms & signatures', blurb: 'Fill forms, draw or certify signatures, and verify who signed what.', icon: 'PenLine' },
+  security: { eyebrow: 'Lock it down', blurb: 'Add passwords and permissions, black out private details and strip hidden data.', icon: 'ShieldCheck' },
+  'forms-sign': { eyebrow: 'Forms & signatures', blurb: 'Sign, stamp and fill forms, add certified signatures and verify who signed what.', icon: 'PenLine' },
   review: { eyebrow: 'Inspect & compare', blurb: 'Diff versions, audit accessibility, inspect internals and count words.', icon: 'GitCompare' },
 }
 
