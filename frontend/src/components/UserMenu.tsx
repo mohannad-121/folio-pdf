@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { CreditCard, LogOut, Sparkles, Timer, User as UserIcon } from 'lucide-react'
+import { CreditCard, LogOut, ShieldCheck, Sparkles, Timer, User as UserIcon } from 'lucide-react'
 import clsx from 'clsx'
-import { daysUntil, initials, useAuth } from '../lib/auth'
+import { daysUntil, initials, useAccountsEnabled, useAuth } from '../lib/auth'
 import { getPlanTier, TIER_META } from '../lib/plans'
 import { useCheckout } from '../lib/paddle'
 import { pop } from '../lib/motion'
@@ -31,14 +31,15 @@ export default function UserMenu() {
   const me = useAuth((s) => s.me)
   const loading = useAuth((s) => s.loading)
   const openAuth = useCheckout((s) => s.openAuth)
+  const accounts = useAccountsEnabled()
 
   if (loading) return <Skeleton className="h-8 w-20 rounded-lg" />
   if (!me) return null
   const billing = me.billing_enabled
   const user = me.user
 
-  // Self-hosted edition: no account nags at all (but keep a signed-in user's menu).
-  if (!billing && !user) return null
+  // No Supabase on this server: no account UI at all (but keep a signed-in user's menu).
+  if (!accounts && !user) return null
 
   const trialDays = me.plan_status === 'trialing' ? daysUntil(me.trial_ends_at) : null
   const plan = getPlanTier(me.plan)
@@ -77,7 +78,7 @@ export default function UserMenu() {
 
 function AccountMenu() {
   const me = useAuth((s) => s.me)!
-  const logout = useAuth((s) => s.logout)
+  const signOut = useAuth((s) => s.signOut)
   const navigate = useNavigate()
   const reduce = useReducedMotion()
   const [open, setOpen] = useState(false)
@@ -157,6 +158,9 @@ function AccountMenu() {
               <button type="button" role="menuitem" className={itemCls} onClick={() => go('/account')}>
                 <UserIcon size={16} className="text-muted" aria-hidden="true" /> Account
               </button>
+              <button type="button" role="menuitem" className={itemCls} onClick={() => go('/account?tab=security')}>
+                <ShieldCheck size={16} className="text-muted" aria-hidden="true" /> Security
+              </button>
               {me.billing_enabled && (
                 <button type="button" role="menuitem" className={itemCls} onClick={() => go('/account?tab=billing')}>
                   <CreditCard size={16} className="text-muted" aria-hidden="true" /> Billing
@@ -173,7 +177,7 @@ function AccountMenu() {
                 className={itemCls}
                 onClick={async () => {
                   setOpen(false)
-                  await logout()
+                  await signOut()
                   toast.info('Signed out')
                   navigate('/')
                 }}

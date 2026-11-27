@@ -1,22 +1,27 @@
-import { useEffect, type CSSProperties } from 'react'
+import { useEffect, useRef, type CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { Check, FileText, PenLine, ScanText, ShieldCheck } from 'lucide-react'
 import clsx from 'clsx'
-import { AuthForm, type AuthMode } from '../components/AuthDialog'
-import BrandMark from '../components/BrandMark'
-import { toast } from '../components/ui'
-import { useAuth } from '../lib/auth'
+import { AuthFlow, type AuthMode } from '../components/AuthDialog'
+import { EmptyState } from '../components/ui'
+import { useAccountsEnabled, useAuth } from '../lib/auth'
 import { isTier, type BillingInterval, type PaidTier } from '../lib/plans'
-import { resumeCheckout, type CheckoutIntent } from '../lib/paddle'
+import { announceAuth, resumeCheckout, type CheckoutIntent } from '../lib/paddle'
 import { staggerContainer, staggerItem } from '../lib/motion'
 
-/** /login and /signup: the auth form centered next to an illustration. */
-export default function AuthPage({ mode }: { mode: AuthMode }) {
+type PageMode = Exclude<AuthMode, 'mfa'>
+const PATHS: Record<PageMode, string> = { signin: '/login', signup: '/signup', forgot: '/forgot' }
+
+/** /login, /signup and /forgot: the auth flow centered next to an illustration. */
+export default function AuthPage({ mode }: { mode: PageMode }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const reduce = useReducedMotion()
   const user = useAuth((s) => s.me?.user)
+  const accounts = useAccountsEnabled()
+  const configKnown = useAuth((s) => s.accountsEnabled !== null)
+  const finishing = useRef(false)
   const next = params.get('next') || '/account'
   const planParam = params.get('plan')
   const intent: CheckoutIntent | null =
@@ -24,11 +29,21 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
 
   // Already signed in → go on.
   useEffect(() => {
-    if (user && !intent) navigate(next, { replace: true })
+    if (user && !intent && !finishing.current && !useAuth.getState().mfaPending) navigate(next, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on sign-in state changes
   }, [user])
 
-  const setMode = (m: AuthMode) => navigate({ pathname: m === 'signin' ? '/login' : '/signup', search: params.toString() }, { replace: true })
+  const setMode = (m: AuthMode) => {
+    if (m !== 'mfa') navigate({ pathname: PATHS[m], search: params.toString() }, { replace: true })
+  }
+
+  if (configKnown && !accounts) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-20">
+        <EmptyState icon={<ShieldCheck />} title="Accounts are not enabled on this server" description="This Folio server runs without sign-in. Every tool is available without an account." action={<Link to="/" className="font-medium text-brand-700 hover:underline dark:text-brand-300">Go to all tools</Link>} />
+      </div>
+    )
+  }
 
   return (
     <div className="relative isolate min-h-[calc(100dvh-3.5rem)] overflow-hidden">
@@ -40,17 +55,15 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
 
         <motion.div initial={reduce ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mx-auto w-full max-w-md">
           <div className="rounded-3xl border border-border bg-surface p-6 shadow-lift sm:p-8">
-            <div className="mb-6 flex flex-col items-center text-center">
-              <BrandMark size="lg" />
-              <h1 className="text-title mt-4 text-2xl">{mode === 'signin' ? 'Sign in to Folio' : 'Create your account'}</h1>
-              <p className="mt-1 text-sm text-muted">{mode === 'signin' ? 'Welcome back. Your plan and history are waiting.' : 'Free forever. Every paid plan starts with a 7-day trial.'}</p>
-            </div>
-            <AuthForm
+            <h1 className="sr-only">{mode === 'signin' ? 'Sign in to Folio' : mode === 'signup' ? 'Create your Folio account' : 'Reset your password'}</h1>
+            <AuthFlow
               mode={mode}
+              variant="page"
               onModeChange={setMode}
               intent={intent}
-              onSuccess={(me, m) => {
-                toast.success(m === 'signin' ? `Welcome back${me.user?.name ? `, ${me.user.name.split(' ')[0]}` : ''}` : 'Your account is ready')
+              onDone={(kind) => {
+                finishing.current = true
+                announceAuth(kind, intent)
                 if (intent) {
                   navigate('/pricing', { replace: true })
                   resumeCheckout(intent)
@@ -67,9 +80,14 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   )
 }
 
-function Illustration({ mode }: { mode: AuthMode }) {
+function Illustration({ mode }: { mode: PageMode }) {
   const reduce = useReducedMotion()
-  const points = mode === 'signup' ? ['50+ PDF tools in one place', '7-day free trial on every paid plan', 'Files auto-delete within 24 hours'] : ['Pick up right where you left off', 'Your plan, usage and API keys', 'Billing and invoices in one place']
+  const points =
+    mode === 'signup'
+      ? ['50+ PDF tools in one place', '7-day free trial on every paid plan', 'Files auto-delete within 24 hours']
+      : mode === 'forgot'
+        ? ['Reset with a 6-digit code from your inbox', 'Your plan and files stay exactly as they are', 'Two-factor authentication stays on']
+        : ['Pick up right where you left off', 'Your plan, usage and API keys', 'Two-factor authentication with any authenticator app']
   const cards = [
     { Icon: FileText, label: 'Quarterly report.pdf', accent: 'var(--color-brand-500)', cls: 'top-4 left-0 -rotate-6' },
     { Icon: ScanText, label: 'OCR complete', accent: 'var(--color-cat-optimize-500)', cls: 'top-24 right-0 rotate-3' },

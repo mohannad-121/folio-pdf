@@ -35,5 +35,7 @@ python-magic>=0.4.27; sys_platform != "win32"
 python-magic-bin>=0.4.14; sys_platform == "win32"
 httpx>=0.27
 
-# Accounts & billing (SQLite by default; add a driver such as psycopg[binary] for Postgres)
+# Accounts (Supabase Auth) & billing. SQLite by default; Supabase Postgres via the pure-Python pg8000 driver.
 sqlalchemy>=2.0
+PyJWT[crypto]>=2.10
+pg8000>=1.31

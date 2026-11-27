@@ -20,9 +20,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import ACTIVE_STATUSES, Principal, build_me, require_user
+from .auth import ACTIVE_STATUSES, Principal, build_me, require_sensitive, require_user
 from .config import settings
-from .db import User, WebhookEvent, get_db, session_scope, to_naive_utc
+from .db import User, WebhookEvent, get_db, session_scope, to_naive_utc, valid_uuid
 
 log = logging.getLogger("folio.billing")
 
@@ -198,8 +198,9 @@ def apply_subscription(user: User, sub: dict, *, force: bool = False) -> bool:
 def _find_user(db: Session, sub: dict) -> User | None:
     custom = sub.get("custom_data") or {}
     uid = custom.get("user_id") if isinstance(custom, dict) else None
+    uid = valid_uuid(uid)
     if uid:
-        user = db.get(User, str(uid))
+        user = db.get(User, uid)
         if user:
             return user
     if sub.get("id"):
@@ -269,7 +270,7 @@ def billing_config():
 
 
 @router.post("/checkout")
-def checkout(body: CheckoutIn, principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def checkout(body: CheckoutIn, principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     _require_billing()
     price_id = configured_prices()[body.plan][body.interval]
     if not price_id:
@@ -283,7 +284,9 @@ def checkout(body: CheckoutIn, principal: Principal = Depends(require_user), db:
             plan=user.plan,
             plan_status=user.plan_status,
         )
-    customer = {"id": user.paddle_customer_id} if user.paddle_customer_id else {"email": user.email}
+    # The token's email is verified by Supabase; the stored copy is only a fallback.
+    email = principal.email or user.email
+    customer = {"id": user.paddle_customer_id} if user.paddle_customer_id else {"email": email}
     return {
         "price_id": price_id,
         "customer": customer,
@@ -293,7 +296,7 @@ def checkout(body: CheckoutIn, principal: Principal = Depends(require_user), db:
 
 
 @router.post("/change-plan")
-def change_plan(body: CheckoutIn, principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def change_plan(body: CheckoutIn, principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     _require_billing()
     price_id = configured_prices()[body.plan][body.interval]
     if not price_id:
@@ -319,7 +322,7 @@ def change_plan(body: CheckoutIn, principal: Principal = Depends(require_user), 
 
 
 @router.post("/portal")
-def portal(principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def portal(principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     _require_billing()
     user = db.get(User, principal.user.id)
     if not user.paddle_customer_id:
@@ -421,7 +424,8 @@ def _handle_event(event_id: str, event_type: str, data: dict) -> dict:
         elif event_type == "transaction.completed":
             custom = data.get("custom_data") or {}
             uid = custom.get("user_id") if isinstance(custom, dict) else None
-            user = db.get(User, str(uid)) if uid else None
+            uid = valid_uuid(uid)
+            user = db.get(User, uid) if uid else None
             if user and data.get("customer_id") and not user.paddle_customer_id:
                 user.paddle_customer_id = data["customer_id"]
                 handled = True

@@ -1,148 +1,151 @@
-"""Accounts: password hashing, signed session cookies, API keys and the /api/auth + /api/account routes.
+"""Accounts on Supabase Auth: access-token verification, MFA (aal2) enforcement, API keys and the
+/api/auth + /api/account routes.
 
-Only the standard library is used for crypto (``hashlib.scrypt``, ``hmac``, ``secrets``) so nothing
-native beyond CPython itself is needed.
+Supabase owns credentials (sign-up, email codes, passwords, TOTP factors). The browser sends the
+Supabase access token as ``Authorization: Bearer <jwt>``; we verify it against the project's JWKS
+(ES256/RS256 only) and mirror the user into the local ``users`` table keyed by the Supabase uid
+(``sub``). Max users can also authenticate with a personal API key (``Bearer folio_...``).
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import hmac
 import logging
-import re
 import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
+import httpx
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from . import plans
 from .config import settings
-from .db import ApiKey, User, get_db, iso, session_scope, utcnow
+from .db import ApiKey, User, get_db, get_engine, iso, session_scope, utcnow, valid_uuid
 
 log = logging.getLogger("folio.auth")
 
-COOKIE_NAME = "folio_session"
 API_KEY_PREFIX = "folio_"
 ACTIVE_STATUSES = ("active", "trialing", "past_due")
-
-# ---- passwords ----------------------------------------------------------------------------
-
-_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
-
-
-def _b64e(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+ALLOWED_ALGORITHMS = ("ES256", "RS256")
+JWKS_TTL_SECONDS = 600
+JWKS_MIN_REFETCH_SECONDS = 30  # unknown-kid refetches are throttled (random kids must not hammer Supabase)
+FACTOR_CACHE_SECONDS = 60
 
 
-def _b64d(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-
-
-def hash_password(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    dk = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32)
-    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_b64e(salt)}${_b64e(dk)}"
-
-
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        algo, n, r, p, salt, expected = stored.split("$")
-        if algo != "scrypt":
-            return False
-        want = _b64d(expected)
-        dk = hashlib.scrypt(
-            password.encode(), salt=_b64d(salt), n=int(n), r=int(r), p=int(p), dklen=len(want), maxmem=64 * 1024 * 1024
-        )
-    except (ValueError, TypeError):
-        return False
-    return hmac.compare_digest(dk, want)
-
-
-# Used to keep the timing of "unknown email" close to "wrong password".
-_DUMMY_HASH = hash_password(secrets.token_hex(8))
-
-
-# ---- session tokens -----------------------------------------------------------------------
-
-_secret_cache: bytes | None = None
-_secret_lock = threading.Lock()
-
-
-def secret_key() -> bytes:
-    global _secret_cache
-    if settings.secret_key:
-        return settings.secret_key.encode()
-    with _secret_lock:
-        if _secret_cache is None:
-            path = settings.data_dir / ".secret_key"
-            if path.exists() and path.read_text(encoding="utf-8").strip():
-                _secret_cache = path.read_text(encoding="utf-8").strip().encode()
-            else:
-                value = secrets.token_urlsafe(48)
-                path.write_text(value, encoding="utf-8")
-                _secret_cache = value.encode()
-        return _secret_cache
-
-
-def _sign(payload: str) -> str:
-    return _b64e(hmac.new(secret_key(), payload.encode(), hashlib.sha256).digest())
-
-
-def password_fingerprint(password_hash: str) -> str:
-    """Short keyed digest of the password hash; changing the password invalidates every session."""
-    return _sign("pw:" + password_hash)[:16]
-
-
-def make_session_token(user: User, now: float | None = None) -> str:
-    issued = int(now if now is not None else time.time())
-    expiry = issued + settings.session_days * 86400
-    payload = f"{user.id}|{issued}|{expiry}|{password_fingerprint(user.password_hash)}"
-    return f"{_b64e(payload.encode())}.{_sign(payload)}"
-
-
-def parse_session_token(token: str) -> tuple[str, int, str] | None:
-    """Return (user_id, issued_at, password_fingerprint) for a validly signed, unexpired token."""
-    try:
-        body, sig = token.split(".", 1)
-        payload = _b64d(body).decode()
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if not hmac.compare_digest(sig, _sign(payload)):
-        return None
-    try:
-        user_id, issued, expiry, fingerprint = payload.split("|")
-        issued_i, expiry_i = int(issued), int(expiry)
-    except ValueError:
-        return None
-    if expiry_i < time.time():
-        return None
-    return user_id, issued_i, fingerprint
-
-
-def set_session_cookie(response: Response, user: User) -> None:
-    response.set_cookie(
-        COOKIE_NAME,
-        make_session_token(user),
-        max_age=settings.session_days * 86400,
-        httponly=True,
-        samesite="lax",
-        secure=settings.cookie_secure,
-        path="/",
-    )
-
-
-def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=settings.cookie_secure)
+def _err(status: int, code: str, message: str, **extra) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
 
 
 def hash_api_key(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+# ---- JWKS ---------------------------------------------------------------------------------
+
+
+class TokenError(Exception):
+    pass
+
+
+def jwks_url() -> str:
+    return f"{settings.supabase_issuer}/.well-known/jwks.json"
+
+
+def _fetch_jwks(url: str) -> dict:
+    """GET the JWKS document. Tests monkeypatch this."""
+    resp = httpx.get(url, timeout=10.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+class _JwksCache:
+    def __init__(self) -> None:
+        self.keys: dict[str, jwt.PyJWK] = {}
+        self.fetched_at = 0.0
+        self.lock = threading.Lock()
+
+    def reset(self) -> None:
+        with self.lock:
+            self.keys, self.fetched_at = {}, 0.0
+
+    def _refresh(self) -> None:
+        doc = _fetch_jwks(jwks_url())
+        keys: dict[str, jwt.PyJWK] = {}
+        for raw in doc.get("keys") or []:
+            kid = raw.get("kid")
+            alg = raw.get("alg")
+            if not kid or (alg and alg not in ALLOWED_ALGORITHMS):
+                continue
+            try:
+                keys[kid] = jwt.PyJWK(raw, algorithm=alg)
+            except (jwt.PyJWKError, jwt.InvalidKeyError) as e:
+                log.warning("Skipping unusable JWKS key %s: %s", kid, e)
+        self.keys, self.fetched_at = keys, time.time()
+
+    def get(self, kid: str) -> jwt.PyJWK:
+        with self.lock:
+            age = time.time() - self.fetched_at
+            stale = age > JWKS_TTL_SECONDS
+            missing = kid not in self.keys
+            if stale or (missing and age > JWKS_MIN_REFETCH_SECONDS):
+                try:
+                    self._refresh()
+                except (httpx.HTTPError, ValueError) as e:
+                    log.warning("Could not fetch the Supabase JWKS: %s", e)
+                    if not self.keys:
+                        raise TokenError("signing keys unavailable") from e
+            key = self.keys.get(kid)
+        if key is None:
+            raise TokenError("unknown signing key")
+        return key
+
+
+_jwks = _JwksCache()
+
+
+def verify_access_token(token: str) -> dict:
+    """Validate a Supabase access token and return its claims. Raises ``TokenError``."""
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError as e:
+        raise TokenError("malformed token") from e
+    alg, kid = header.get("alg"), header.get("kid")
+    if alg not in ALLOWED_ALGORITHMS:
+        raise TokenError(f"algorithm {alg!r} not allowed")
+    if not kid:
+        raise TokenError("token has no key id")
+    key = _jwks.get(kid)
+    try:
+        claims = jwt.decode(
+            token,
+            key.key,
+            algorithms=[alg],
+            audience=settings.supabase_jwt_audience,
+            issuer=settings.supabase_issuer,
+            leeway=10,
+            options={"require": ["exp", "sub", "aud", "iss"]},
+        )
+    except jwt.PyJWTError as e:
+        raise TokenError(str(e)) from e
+    if not isinstance(claims.get("sub"), str) or not claims["sub"]:
+        raise TokenError("token has no subject")
+    return claims
+
+
+def _amr_methods(claims: dict) -> list[str]:
+    out = []
+    for entry in claims.get("amr") or []:
+        method = entry.get("method") if isinstance(entry, dict) else entry
+        if isinstance(method, str):
+            out.append(method)
+    return out
 
 
 # ---- principal ----------------------------------------------------------------------------
@@ -172,7 +175,8 @@ def effective_tier(user: User | None) -> str:
 class Principal:
     user: User | None  # detached ORM object (safe to read attributes)
     ip: str
-    via: str | None = None  # "session" | "api_key" | None
+    via: str | None = None  # "supabase" | "api_key" | None
+    claims: dict = field(default_factory=dict)
     extra: dict = field(default_factory=dict)
 
     @property
@@ -183,53 +187,88 @@ class Principal:
     def subject(self) -> str:
         return self.user.id if self.user else f"ip:{self.ip}"
 
+    @property
+    def aal(self) -> str | None:
+        return self.claims.get("aal") if self.via == "supabase" else None
 
-def _err(status: int, code: str, message: str, **extra) -> HTTPException:
-    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
+    @property
+    def amr(self) -> list[str]:
+        return _amr_methods(self.claims)
+
+    @property
+    def email(self) -> str | None:
+        """The verified email from the access token (falls back to the stored one)."""
+        return self.claims.get("email") or (self.user.email if self.user else None)
+
+
+def _display_name(claims: dict) -> str | None:
+    meta = claims.get("user_metadata") or {}
+    if not isinstance(meta, dict):
+        return None
+    for k in ("full_name", "name"):
+        v = meta.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:200]
+    return None
+
+
+def upsert_user(claims: dict) -> User:
+    """Return the local user for the token's ``sub``, creating it on first sight."""
+    uid = valid_uuid(claims["sub"])
+    if uid is None:
+        raise TokenError("subject is not a uuid")
+    email = (claims.get("email") or "").strip().lower()
+    for _ in range(2):
+        try:
+            with session_scope() as s:
+                user = s.get(User, uid)
+                if user is None:
+                    user = User(id=uid, email=email, name=_display_name(claims))
+                    s.add(user)
+                    s.flush()
+                elif email and user.email != email:
+                    user.email = email  # changed in Supabase
+                s.expunge(user)
+                return user
+        except IntegrityError:
+            continue  # created concurrently by another request; read it back
+    with session_scope() as s:
+        user = s.get(User, uid)
+        s.expunge(user)
+        return user
 
 
 def _load_principal(request: Request) -> Principal:
     ip = client_ip(request)
     auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        key = auth[7:].strip()
-        if key.startswith(API_KEY_PREFIX):
-            with session_scope() as s:
-                row = s.scalar(select(ApiKey).where(ApiKey.key_hash == hash_api_key(key)))
-                user = s.get(User, row.user_id) if row else None
-                if row is None or user is None:
-                    raise _err(401, "invalid_api_key", "Invalid API key.")
-                row.last_used_at = utcnow()
-                s.expunge(user)
-            principal = Principal(user=user, ip=ip, via="api_key")
-            if not plans.tier_at_least(principal.tier, "max"):
-                raise _err(
-                    402,
-                    "upgrade_required",
-                    "API access is available on Max.",
-                    required_plan="max",
-                    feature="api",
-                )
-            return principal
-    token = request.cookies.get(COOKIE_NAME)
-    if token:
-        parsed = parse_session_token(token)
-        if parsed:
-            user_id, _issued, fingerprint = parsed
-            with session_scope() as s:
-                user = s.get(User, user_id)
-                if user is not None:
-                    if not hmac.compare_digest(fingerprint, password_fingerprint(user.password_hash)):
-                        user = None
-                    else:
-                        s.expunge(user)
-            if user is not None:
-                return Principal(user=user, ip=ip, via="session")
-    return Principal(user=None, ip=ip)
+    if not auth.lower().startswith("bearer "):
+        return Principal(user=None, ip=ip)
+    token = auth[7:].strip()
+    if token.startswith(API_KEY_PREFIX):
+        with session_scope() as s:
+            row = s.scalar(select(ApiKey).where(ApiKey.key_hash == hash_api_key(token)))
+            user = s.get(User, row.user_id) if row else None
+            if row is None or user is None:
+                raise _err(401, "invalid_api_key", "Invalid API key.")
+            row.last_used_at = utcnow()
+            s.expunge(user)
+        principal = Principal(user=user, ip=ip, via="api_key")
+        if not plans.tier_at_least(principal.tier, "max"):
+            raise _err(402, "upgrade_required", "API access is available on Max.", required_plan="max", feature="api")
+        return principal
+    if not settings.accounts_enabled or not token:
+        return Principal(user=None, ip=ip)
+    try:
+        claims = verify_access_token(token)
+        user = upsert_user(claims)
+    except TokenError as e:
+        log.info("Rejected access token: %s", e)
+        raise _err(401, "invalid_token", "Your session has expired. Please sign in again.") from e
+    return Principal(user=user, ip=ip, via="supabase", claims=claims)
 
 
 def get_principal(request: Request) -> Principal:
-    """Resolve (and cache per request) the caller: session cookie, API key, or anonymous."""
+    """Resolve (and cache per request) the caller: Supabase token, API key, or anonymous."""
     cached = getattr(request.state, "folio_principal", None)
     if cached is not None:
         return cached
@@ -241,6 +280,132 @@ def get_principal(request: Request) -> Principal:
 def require_user(principal: Principal = Depends(get_principal)) -> Principal:
     if principal.user is None:
         raise _err(401, "login_required", "Please sign in to continue.")
+    return principal
+
+
+# ---- Supabase Admin API ---------------------------------------------------------------------
+
+
+class AdminError(Exception):
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+# Tests inject an ``httpx.MockTransport`` here.
+_admin_transport: httpx.BaseTransport | None = None
+
+
+def admin_request(method: str, path: str) -> Any:
+    """Call the Auth Admin API (``/auth/v1/admin/...``) with the secret key."""
+    if not settings.supabase_secret_key:
+        raise AdminError("FOLIO_SUPABASE_SECRET_KEY is not configured")
+    try:
+        with httpx.Client(
+            base_url=settings.supabase_issuer,
+            # New-style secret keys are not JWTs: they go in the apikey header only.
+            headers={"apikey": settings.supabase_secret_key, "Accept": "application/json"},
+            timeout=15.0,
+            transport=_admin_transport,
+        ) as client:
+            resp = client.request(method, path)
+    except httpx.HTTPError as e:
+        raise AdminError(f"Supabase request failed: {e}") from e
+    if resp.status_code >= 400:
+        raise AdminError(f"Supabase {method} {path} -> {resp.status_code}: {resp.text[:300]}", resp.status_code)
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+# ---- MFA ----------------------------------------------------------------------------------
+
+_factor_cache: dict[str, tuple[float, bool]] = {}
+_factor_lock = threading.Lock()
+_warned_no_factor_source = False
+
+
+def reset_auth_caches() -> None:
+    global _warned_no_factor_source
+    _jwks.reset()
+    with _factor_lock:
+        _factor_cache.clear()
+    _warned_no_factor_source = False
+
+
+def _factors_from_db(user_id: str) -> bool | None:
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        return None
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM auth.mfa_factors WHERE user_id = CAST(:uid AS uuid) "
+                    "AND status = 'verified' AND factor_type = 'totp' LIMIT 1"
+                ),
+                {"uid": user_id},
+            ).first()
+        return row is not None
+    except SQLAlchemyError as e:
+        log.warning("Could not read auth.mfa_factors: %s", e)
+        return None
+
+
+def _factors_from_admin(user_id: str) -> bool | None:
+    if not settings.supabase_secret_key:
+        return None
+    try:
+        data = admin_request("GET", f"/admin/users/{user_id}")
+    except AdminError as e:
+        log.warning("Could not read MFA factors from Supabase: %s", e)
+        return None
+    factors = (data.get("factors") or []) if isinstance(data, dict) else []
+    return any(isinstance(f, dict) and f.get("status") == "verified" for f in factors)
+
+
+def has_verified_factor(principal: Principal) -> bool | None:
+    """Whether the user has a verified TOTP factor. ``None`` = unknown (no way to ask)."""
+    global _warned_no_factor_source
+    if principal.user is None or principal.via != "supabase":
+        return False
+    if principal.aal == "aal2" or any(m in ("totp", "mfa/totp") for m in principal.amr):
+        return True
+    uid = principal.user.id
+    with _factor_lock:
+        hit = _factor_cache.get(uid)
+        if hit and time.time() - hit[0] < FACTOR_CACHE_SECONDS:
+            return hit[1]
+    result = _factors_from_db(uid)
+    if result is None:
+        result = _factors_from_admin(uid)
+    if result is None:
+        if not _warned_no_factor_source:
+            _warned_no_factor_source = True
+            log.warning(
+                "Cannot tell whether users have MFA enabled: set FOLIO_SUPABASE_SECRET_KEY or use Supabase "
+                "Postgres as FOLIO_DATABASE_URL. Sensitive actions are allowed at aal1 until then."
+            )
+        return None
+    with _factor_lock:
+        _factor_cache[uid] = (time.time(), result)
+    return result
+
+
+def forget_factor_cache(user_id: str) -> None:
+    with _factor_lock:
+        _factor_cache.pop(user_id, None)
+
+
+def require_sensitive(principal: Principal = Depends(require_user)) -> Principal:
+    """Signed-in user who, if they have TOTP set up, proved it in this session (aal2)."""
+    if not settings.require_mfa_for_sensitive or principal.via != "supabase" or principal.aal == "aal2":
+        return principal
+    if has_verified_factor(principal):
+        raise _err(403, "mfa_required", "Enter your authenticator code to continue.")
     return principal
 
 
@@ -268,6 +433,9 @@ def build_me(principal: Principal, user: User | None = None) -> dict:
         "cancel_at": iso(user.cancel_at) if user else None,
         "trial_used": bool(user.trial_used) if user else False,
         "billing_enabled": settings.billing_enabled,
+        "accounts_enabled": settings.accounts_enabled,
+        "aal": principal.aal,
+        "mfa_enabled": bool(has_verified_factor(principal)) if user else False,
         "limits": limits,
         "usage": {
             "today": usage_today(subject) if settings.billing_enabled else 0,
@@ -276,76 +444,11 @@ def build_me(principal: Principal, user: User | None = None) -> dict:
     }
 
 
-# ---- login rate limiting --------------------------------------------------------------------
-
-_FAIL_WINDOW = 15 * 60
-_FAIL_LIMIT = 10
-_failures: dict[str, list[float]] = {}
-_fail_lock = threading.Lock()
-
-
-def _fail_key(email: str, ip: str) -> str:
-    return f"{email}|{ip}"
-
-
-def _recent_failures(key: str) -> int:
-    cutoff = time.time() - _FAIL_WINDOW
-    with _fail_lock:
-        hits = [t for t in _failures.get(key, []) if t > cutoff]
-        if hits:
-            _failures[key] = hits
-        else:
-            _failures.pop(key, None)
-        return len(hits)
-
-
-def _record_failure(key: str) -> None:
-    with _fail_lock:
-        _failures.setdefault(key, []).append(time.time())
-        if len(_failures) > 10000:  # crude memory bound
-            for k in list(_failures)[:1000]:
-                _failures.pop(k, None)
-
-
-def reset_rate_limits() -> None:
-    with _fail_lock:
-        _failures.clear()
-
-
 # ---- schemas ------------------------------------------------------------------------------
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def _normalize_email(email: str) -> str:
-    email = (email or "").strip().lower()
-    if len(email) > 320 or not _EMAIL_RE.match(email):
-        raise _err(422, "invalid_email", "Please enter a valid email address.")
-    return email
-
-
-class SignupIn(BaseModel):
-    email: str
-    password: str = Field(min_length=8, max_length=512)
-    name: str | None = Field(default=None, max_length=200)
-
-
-class LoginIn(BaseModel):
-    email: str
-    password: str = Field(max_length=512)
 
 
 class AccountPatch(BaseModel):
     name: str | None = Field(default=None, max_length=200)
-
-
-class PasswordChange(BaseModel):
-    current_password: str = Field(max_length=512)
-    new_password: str = Field(min_length=8, max_length=512)
-
-
-class DeleteAccount(BaseModel):
-    password: str = Field(max_length=512)
 
 
 class ApiKeyIn(BaseModel):
@@ -357,41 +460,15 @@ class ApiKeyIn(BaseModel):
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
-@router.post("/auth/signup", status_code=201)
-def signup(body: SignupIn, request: Request, response: Response, db: Session = Depends(get_db)):
-    email = _normalize_email(body.email)
-    if db.scalar(select(User).where(User.email == email)):
-        raise _err(409, "email_taken", "An account with this email already exists.")
-    user = User(email=email, name=(body.name or "").strip() or None, password_hash=hash_password(body.password))
-    db.add(user)
-    db.commit()
-    set_session_cookie(response, user)
-    return build_me(Principal(user=user, ip=client_ip(request), via="session"), user)
-
-
-@router.post("/auth/login")
-def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
-    email = (body.email or "").strip().lower()
-    ip = client_ip(request)
-    key = _fail_key(email, ip)
-    if _recent_failures(key) >= _FAIL_LIMIT:
-        raise _err(429, "too_many_attempts", "Too many failed sign-in attempts. Try again in 15 minutes.")
-    user = db.scalar(select(User).where(User.email == email)) if email else None
-    ok = verify_password(body.password, user.password_hash if user else _DUMMY_HASH)
-    if not user or not ok:
-        _record_failure(key)
-        raise _err(401, "invalid_credentials", "Incorrect email or password.")
-    with _fail_lock:
-        _failures.pop(key, None)
-    set_session_cookie(response, user)
-    return build_me(Principal(user=user, ip=ip, via="session"), user)
-
-
-@router.post("/auth/logout", status_code=204)
-def logout():
-    response = Response(status_code=204)
-    clear_session_cookie(response)
-    return response
+@router.get("/auth/config")
+def auth_config():
+    """Public Supabase settings so the frontend (and the desktop build) can configure supabase-js."""
+    enabled = settings.accounts_enabled
+    return {
+        "enabled": enabled,
+        "supabase_url": settings.supabase_base if enabled else "",
+        "publishable_key": settings.supabase_publishable_key if enabled else "",
+    }
 
 
 @router.get("/auth/me")
@@ -408,30 +485,15 @@ def update_account(body: AccountPatch, principal: Principal = Depends(require_us
     return build_me(principal, user)
 
 
-@router.post("/account/password")
-def change_password(
-    body: PasswordChange,
-    response: Response,
-    principal: Principal = Depends(require_user),
-    db: Session = Depends(get_db),
-):
-    user = db.get(User, principal.user.id)
-    if not verify_password(body.current_password, user.password_hash):
-        raise _err(401, "invalid_credentials", "Your current password is incorrect.")
-    user.password_hash = hash_password(body.new_password)
-    # The new hash changes the session fingerprint, so every older session token stops working;
-    # re-issue one for this browser.
-    user.password_changed_at = utcnow()
-    db.commit()
-    set_session_cookie(response, user)
-    return build_me(principal, user)
-
-
 @router.delete("/account", status_code=204)
-def delete_account(body: DeleteAccount, principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def delete_account(principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
+    if principal.via == "supabase" and not settings.supabase_secret_key:
+        raise _err(
+            501,
+            "secret_key_required",
+            "Account deletion is not configured on this server (FOLIO_SUPABASE_SECRET_KEY is missing).",
+        )
     user = db.get(User, principal.user.id)
-    if not verify_password(body.password, user.password_hash):
-        raise _err(401, "invalid_credentials", "Your password is incorrect.")
     if user.paddle_subscription_id and user.plan_status in ("active", "trialing", "past_due", "paused"):
         from .billing import PaddleError, cancel_subscription_now
 
@@ -444,13 +506,26 @@ def delete_account(body: DeleteAccount, principal: Principal = Depends(require_u
                 "billing_unavailable",
                 "We couldn't cancel your subscription, so your account was not deleted. Please try again.",
             ) from e
-    for k in db.scalars(select(ApiKey).where(ApiKey.user_id == user.id)):
+    uid = user.id
+    for k in db.scalars(select(ApiKey).where(ApiKey.user_id == uid)):
         db.delete(k)
     db.delete(user)
+    # Commit before calling Supabase: the folio.users -> auth.users FK cascades, and an open
+    # transaction holding the row would block Supabase's own delete.
     db.commit()
-    response = Response(status_code=204)
-    clear_session_cookie(response)
-    return response
+    if settings.supabase_secret_key:
+        try:
+            admin_request("DELETE", f"/admin/users/{uid}")
+        except AdminError as e:
+            if e.status != 404:
+                log.warning("Could not delete Supabase user %s: %s", uid, e)
+                raise _err(
+                    502,
+                    "auth_unavailable",
+                    "Your data was removed, but we couldn't delete your sign-in. Please try again.",
+                ) from e
+    forget_factor_cache(uid)
+    return Response(status_code=204)
 
 
 # ---- API keys -----------------------------------------------------------------------------
@@ -472,14 +547,14 @@ def _key_out(k: ApiKey) -> dict:
 
 
 @router.get("/account/api-keys")
-def list_api_keys(principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def list_api_keys(principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     _require_api_tier(principal)
     rows = db.scalars(select(ApiKey).where(ApiKey.user_id == principal.user.id).order_by(ApiKey.created_at))
     return [_key_out(k) for k in rows]
 
 
 @router.post("/account/api-keys", status_code=201)
-def create_api_key(body: ApiKeyIn, principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def create_api_key(body: ApiKeyIn, principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     _require_api_tier(principal)
     raw = API_KEY_PREFIX + secrets.token_urlsafe(24)  # 32 url-safe chars after the prefix
     row = ApiKey(user_id=principal.user.id, name=body.name.strip(), prefix=raw[:12], key_hash=hash_api_key(raw))
@@ -489,7 +564,7 @@ def create_api_key(body: ApiKeyIn, principal: Principal = Depends(require_user),
 
 
 @router.delete("/account/api-keys/{key_id}", status_code=204)
-def delete_api_key(key_id: str, principal: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def delete_api_key(key_id: str, principal: Principal = Depends(require_sensitive), db: Session = Depends(get_db)):
     row = db.get(ApiKey, key_id)
     if row is None or row.user_id != principal.user.id:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "API key not found."})

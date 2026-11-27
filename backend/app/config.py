@@ -33,15 +33,27 @@ class Settings(BaseSettings):
     # False = self-hosted open-source edition: every tool unlocked, accounts optional,
     # billing endpoints report ``enabled: false``.
     billing_enabled: bool = False
-    # SQLAlchemy URL. Empty = sqlite:///<data_dir>/folio.db.
+    # SQLAlchemy URL. Empty = sqlite:///<data_dir>/folio.db. A pasted Supabase ``postgresql://`` or
+    # ``postgres://`` URI is rewritten to the pure-Python pg8000 driver automatically.
     database_url: str = ""
-    # Key that signs session cookies. Empty = generated once and persisted in <data_dir>/.secret_key.
-    secret_key: str = ""
-    session_days: int = 30
-    # Set to true when served over HTTPS so the session cookie gets the Secure flag.
-    cookie_secure: bool = False
+    # Postgres TLS: path to the Supabase CA certificate (Database settings > SSL configuration >
+    # Download certificate). With it the server certificate is verified; without it the connection
+    # is encrypted but not verified (like libpq ``sslmode=require``). Supabase's CA is not in the
+    # system trust store, so ``ssl.create_default_context()`` alone cannot verify the pooler.
+    database_ssl_root_cert: str = ""
     # Use the first X-Forwarded-For hop as the client IP (only behind a trusted reverse proxy).
     trust_proxy: bool = False
+
+    # ---- Supabase Auth ----------------------------------------------------------------------
+    # Accounts are enabled whenever ``supabase_url`` is set (independently of billing).
+    supabase_url: str = ""
+    # Publishable key (sb_publishable_...). Public; handed to the frontend by /api/auth/config.
+    supabase_publishable_key: str = ""
+    # Secret key (sb_secret_...). Optional: enables the Auth Admin API (MFA checks, account deletion).
+    supabase_secret_key: str = ""
+    supabase_jwt_audience: str = "authenticated"
+    # Billing, account deletion and API-key management need aal2 when the user has a verified TOTP factor.
+    require_mfa_for_sensitive: bool = True
     # Paddle Billing.
     paddle_environment: Literal["sandbox", "production"] = "sandbox"
     paddle_client_token: str = ""  # client-side token for Paddle.js
@@ -63,6 +75,18 @@ class Settings(BaseSettings):
         if self.paddle_environment == "production":
             return "https://api.paddle.com"
         return "https://sandbox-api.paddle.com"
+
+    @property
+    def accounts_enabled(self) -> bool:
+        return bool(self.supabase_url.strip())
+
+    @property
+    def supabase_base(self) -> str:
+        return self.supabase_url.strip().rstrip("/")
+
+    @property
+    def supabase_issuer(self) -> str:
+        return f"{self.supabase_base}/auth/v1"
 
     def resolved_database_url(self) -> str:
         if self.database_url:

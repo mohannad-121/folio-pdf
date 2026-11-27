@@ -8,14 +8,13 @@ import {
   Copy,
   CreditCard,
   ExternalLink,
-  Eye,
-  EyeOff,
   KeyRound,
   Lock,
   PartyPopper,
   Plus,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   TriangleExclamationPoint,
   User as UserIcon,
@@ -23,16 +22,18 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { ApiError, getJson, sendJson } from '../lib/api'
-import { currentTier, daysUntil, passwordStrength, useAuth, type Me } from '../lib/auth'
+import { currentTier, daysUntil, useAccountsEnabled, useAuth, type Me } from '../lib/auth'
+import { getSupabase } from '../lib/supabase'
 import { formatMb, formatPrice, getPlanTier, tierCovers, TIER_META, usePlans, tierStyle } from '../lib/plans'
-import { openBillingPortal, startCheckout, syncBilling, useCheckout } from '../lib/paddle'
+import { announceAuth, openBillingPortal, startCheckout, syncBilling, useCheckout } from '../lib/paddle'
 import { instant, spring, tween } from '../lib/motion'
-import { AuthForm, type AuthMode } from '../components/AuthDialog'
+import { AuthFlow, type AuthMode } from '../components/AuthDialog'
+import SecurityTab from '../components/auth/SecurityTab'
 import { Avatar } from '../components/UserMenu'
 import TierBadge, { TierIcon } from '../components/TierBadge'
 import { Badge, Button, Dialog, EmptyState, ProgressBar, Skeleton, toast } from '../components/ui'
 
-type Tab = 'profile' | 'billing' | 'api'
+type Tab = 'profile' | 'security' | 'billing' | 'api'
 
 const fmtDate = (iso: string | null | undefined) => {
   if (!iso) return '—'
@@ -46,7 +47,10 @@ export default function Account() {
   const [params, setParams] = useSearchParams()
   const billing = !!me?.billing_enabled
   const tabs = useMemo(() => {
-    const t: { id: Tab; label: string; Icon: typeof UserIcon }[] = [{ id: 'profile', label: 'Profile', Icon: UserIcon }]
+    const t: { id: Tab; label: string; Icon: typeof UserIcon }[] = [
+      { id: 'profile', label: 'Profile', Icon: UserIcon },
+      { id: 'security', label: 'Security', Icon: ShieldCheck },
+    ]
     if (billing) t.push({ id: 'billing', label: 'Plan & billing', Icon: CreditCard })
     t.push({ id: 'api', label: 'API keys', Icon: KeyRound })
     return t
@@ -76,7 +80,7 @@ export default function Account() {
     )
   }
 
-  if (!me?.user) return <SignedOut />
+  if (!me?.user) return <SignedOut tab={tab} />
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:py-10">
@@ -89,6 +93,7 @@ export default function Account() {
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={tween} role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="mt-6 space-y-6">
           {tab === 'profile' && <ProfileTab me={me} />}
+          {tab === 'security' && <SecurityTab />}
           {tab === 'billing' && <BillingTab me={me} />}
           {tab === 'api' && <ApiKeysTab me={me} />}
         </motion.div>
@@ -97,14 +102,30 @@ export default function Account() {
   )
 }
 
-function SignedOut() {
+function SignedOut({ tab }: { tab: Tab }) {
+  const accounts = useAccountsEnabled()
   const [mode, setMode] = useState<AuthMode>('signin')
+  if (!accounts) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-20">
+        <EmptyState icon={<UserIcon />} title="Accounts are not enabled on this server" description="This Folio server runs without sign-in. Every tool is available without an account." action={<Link to="/" className="font-medium text-brand-700 hover:underline dark:text-brand-300">Go to all tools</Link>} />
+      </div>
+    )
+  }
+  const security = tab === 'security'
   return (
-    <div className="mx-auto max-w-md px-4 py-16">
-      <div className="rounded-3xl border border-border bg-surface p-6 shadow-lift sm:p-8">
-        <h1 className="text-title text-center text-2xl">Sign in to see your account</h1>
-        <p className="mt-1 mb-6 text-center text-sm text-muted">Profile, plan, billing and API keys live here.</p>
-        <AuthForm mode={mode} onModeChange={setMode} onSuccess={() => toast.success('Signed in')} />
+    <div className="relative isolate">
+      <div className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-[420px] w-[680px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklab,var(--color-brand-500)_20%,transparent),transparent)] blur-2xl" aria-hidden="true" />
+      <div className="mx-auto max-w-md px-4 py-14">
+        <div className="mb-5 flex justify-center">
+          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3.5 py-1.5 text-xs font-medium text-muted shadow-[0_1px_2px_rgb(15_23_42/0.05)] backdrop-blur">
+            {security ? <ShieldCheck size={14} className="shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" /> : <UserIcon size={14} className="shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />}
+            {security ? 'Sign in to manage 2FA, your password and sessions' : 'Sign in to see your profile, plan and billing'}
+          </span>
+        </div>
+        <div className="rounded-3xl border border-border bg-surface p-6 shadow-lift sm:p-8">
+          <AuthFlow mode={mode} onModeChange={setMode} onDone={(kind) => announceAuth(kind, null)} />
+        </div>
       </div>
     </div>
   )
@@ -211,18 +232,6 @@ function Section({ title, description, children, tone, icon }: { title: ReactNod
 // Profile
 // ---------------------------------------------------------------------------
 
-function PasswordInput({ id, value, onChange, autoComplete, invalid, describedBy }: { id: string; value: string; onChange: (v: string) => void; autoComplete: string; invalid?: boolean; describedBy?: string }) {
-  const [show, setShow] = useState(false)
-  return (
-    <div className="relative">
-      <input id={id} type={show ? 'text' : 'password'} className="field h-10 pr-10" value={value} onChange={(e) => onChange(e.target.value)} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={describedBy} />
-      <button type="button" onClick={() => setShow((s) => !s)} className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-md p-1.5 text-muted-2 transition hover:bg-surface-2 hover:text-fg" aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show}>
-        {show ? <EyeOff size={16} /> : <Eye size={16} />}
-      </button>
-    </div>
-  )
-}
-
 function ProfileTab({ me }: { me: Me }) {
   const id = useId()
   const refresh = useAuth((s) => s.refresh)
@@ -231,14 +240,6 @@ function ProfileTab({ me }: { me: Me }) {
   const user = me.user!
   const [name, setName] = useState(user.name ?? '')
   const [savingName, setSavingName] = useState(false)
-
-  const [cur, setCur] = useState('')
-  const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [pwBusy, setPwBusy] = useState(false)
-  const [pwError, setPwError] = useState<string | null>(null)
-  const strength = passwordStrength(next)
-  const mismatch = confirm.length > 0 && confirm !== next
 
   const [delOpen, setDelOpen] = useState(false)
 
@@ -249,30 +250,13 @@ function ProfileTab({ me }: { me: Me }) {
       const res = await sendJson<Me | { user: Me['user'] } | undefined>('PATCH', '/api/account', { name: name.trim() })
       if (res && 'plan' in res) setMe(res as Me)
       else await refresh()
+      // Keep the Supabase profile in sync (best effort; the backend copy is what Folio shows).
+      void getSupabase().then((sb) => sb?.auth.updateUser({ data: { full_name: name.trim() } }))
       toast.success('Name updated')
     } catch (err) {
       toast.error('Could not update your name', err instanceof Error ? err.message : undefined)
     } finally {
       setSavingName(false)
-    }
-  }
-
-  const changePassword = async (e: FormEvent) => {
-    e.preventDefault()
-    setPwError(null)
-    if (next.length < 8) return setPwError('The new password must have at least 8 characters.')
-    if (next !== confirm) return setPwError('The new passwords do not match.')
-    setPwBusy(true)
-    try {
-      await sendJson('POST', '/api/account/password', { current_password: cur, new_password: next })
-      setCur('')
-      setNext('')
-      setConfirm('')
-      toast.success('Password changed')
-    } catch (err) {
-      setPwError(err instanceof ApiError && (err.status === 401 || err.status === 403) ? 'Your current password is incorrect.' : err instanceof Error ? err.message : 'Could not change the password.')
-    } finally {
-      setPwBusy(false)
     }
   }
 
@@ -306,52 +290,6 @@ function ProfileTab({ me }: { me: Me }) {
         </form>
       </Section>
 
-      <Section title="Change password" description="Use a long, unique password.">
-        <form onSubmit={changePassword} className="grid gap-5 sm:grid-cols-3">
-          <div>
-            <label htmlFor={`${id}-cur`} className="mb-1.5 block text-sm font-medium">
-              Current password
-            </label>
-            <PasswordInput id={`${id}-cur`} value={cur} onChange={setCur} autoComplete="current-password" />
-          </div>
-          <div>
-            <div className="mb-1.5 flex items-baseline justify-between">
-              <label htmlFor={`${id}-new`} className="block text-sm font-medium">
-                New password
-              </label>
-              {strength.label && <span className="text-xs text-muted">{strength.label}</span>}
-            </div>
-            <PasswordInput id={`${id}-new`} value={next} onChange={setNext} autoComplete="new-password" />
-            <div className="mt-2 grid grid-cols-4 gap-1" aria-hidden="true">
-              {[1, 2, 3, 4].map((i) => (
-                <span key={i} className={clsx('h-1 rounded-full transition-colors', next && strength.score >= i ? ['bg-red-500', 'bg-red-500', 'bg-amber-500', 'bg-lime-500', 'bg-emerald-500'][strength.score] : 'bg-surface-3')} />
-              ))}
-            </div>
-          </div>
-          <div>
-            <label htmlFor={`${id}-confirm`} className="mb-1.5 block text-sm font-medium">
-              Confirm new password
-            </label>
-            <PasswordInput id={`${id}-confirm`} value={confirm} onChange={setConfirm} autoComplete="new-password" invalid={mismatch} describedBy={mismatch ? `${id}-mismatch` : undefined} />
-            {mismatch && (
-              <p id={`${id}-mismatch`} className="mt-1.5 text-xs text-red-600 dark:text-red-400">
-                Does not match.
-              </p>
-            )}
-          </div>
-          {pwError && (
-            <p role="alert" className="text-sm text-red-600 sm:col-span-3 dark:text-red-400">
-              {pwError}
-            </p>
-          )}
-          <div className="sm:col-span-3">
-            <Button type="submit" variant="secondary" loading={pwBusy} disabled={!cur || !next || !confirm}>
-              Update password
-            </Button>
-          </div>
-        </form>
-      </Section>
-
       <Section tone="danger" title="Danger zone" description="Deleting your account removes your profile, API keys and history. This cannot be undone." icon={<ShieldAlert size={20} className="mt-0.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{me.plan !== 'free' && me.billing_enabled ? 'Your subscription is cancelled automatically when you delete your account.' : 'You will be signed out everywhere.'}</p>
@@ -368,7 +306,7 @@ function ProfileTab({ me }: { me: Me }) {
         onDeleted={async () => {
           setDelOpen(false)
           toast.info('Your account was deleted')
-          await refresh()
+          await useAuth.getState().signOut()
           navigate('/')
         }}
       />
@@ -378,11 +316,10 @@ function ProfileTab({ me }: { me: Me }) {
 
 function DeleteAccountDialog({ open, onClose, email, onDeleted }: { open: boolean; onClose: () => void; email: string; onDeleted: () => void }) {
   const id = useId()
-  const [password, setPassword] = useState('')
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ok = password.length > 0 && typed.trim().toLowerCase() === 'delete'
+  const ok = typed.trim().toLowerCase() === 'delete'
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -390,10 +327,18 @@ function DeleteAccountDialog({ open, onClose, email, onDeleted }: { open: boolea
     setBusy(true)
     setError(null)
     try {
-      await sendJson('DELETE', '/api/account', { password })
+      await sendJson('DELETE', '/api/account')
       onDeleted()
     } catch (err) {
-      setError(err instanceof ApiError && (err.status === 401 || err.status === 403) ? 'That password is incorrect.' : err instanceof Error ? err.message : 'Could not delete the account.')
+      setError(
+        err instanceof ApiError && err.code === 'mfa_required'
+          ? 'Enter your authenticator code to delete your account.'
+          : err instanceof ApiError && err.code === 'secret_key_required'
+            ? 'Account deletion isn’t set up on this server yet. Please contact support.'
+            : err instanceof Error
+              ? err.message
+              : 'Could not delete the account.',
+      )
     } finally {
       setBusy(false)
     }
@@ -405,12 +350,6 @@ function DeleteAccountDialog({ open, onClose, email, onDeleted }: { open: boolea
         <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
           <TriangleExclamationPoint size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           Your profile, API keys and any active subscription are removed. Files already processed are deleted within 24 hours.
-        </div>
-        <div>
-          <label htmlFor={`${id}-pw`} className="mb-1.5 block text-sm font-medium">
-            Your password
-          </label>
-          <PasswordInput id={`${id}-pw`} value={password} onChange={setPassword} autoComplete="current-password" />
         </div>
         <div>
           <label htmlFor={`${id}-typed`} className="mb-1.5 block text-sm font-medium">

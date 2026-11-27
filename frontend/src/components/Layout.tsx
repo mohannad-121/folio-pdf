@@ -4,7 +4,7 @@ import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/r
 import { Code2 as Github, LogIn, Menu, Search, Sparkles, User as UserIcon, X } from 'lucide-react'
 import clsx from 'clsx'
 import { useThemeEffect } from '../lib/theme'
-import { useAuth, useAuthBootstrap } from '../lib/auth'
+import { useAccountsEnabled, useAuth, useAuthBootstrap } from '../lib/auth'
 import { registerNavigate, useCheckout } from '../lib/paddle'
 import { instant, page, slideDown, spring } from '../lib/motion'
 import ThemeToggle from './ThemeToggle'
@@ -15,6 +15,7 @@ import UserMenu from './UserMenu'
 import AuthDialog from './AuthDialog'
 import UpgradeDialog from './UpgradeDialog'
 import ChangePlanDialog from './ChangePlanDialog'
+import MfaChallengeDialog from './auth/MfaChallengeDialog'
 
 export { BrandMark }
 
@@ -38,6 +39,7 @@ export default function Layout() {
   useEffect(() => registerNavigate(navigate), [navigate])
   const billing = useAuth((s) => !!s.me?.billing_enabled)
   const user = useAuth((s) => s.me?.user ?? null)
+  const accounts = useAccountsEnabled()
   const openAuth = useCheckout((s) => s.openAuth)
   const NAV = billing ? [...BASE_NAV, PRICING_NAV] : BASE_NAV
   const { pathname } = useLocation()
@@ -127,7 +129,7 @@ export default function Layout() {
                     </NavLink>
                   </li>
                 ))}
-                {billing && (
+                {(accounts || user) && (
                   <li className="mt-2 border-t border-border pt-2">
                     {user ? (
                       <NavLink to="/account" onClick={() => setMenu(false)} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted hover:bg-surface-2 hover:text-fg">
@@ -207,6 +209,7 @@ export default function Layout() {
       <AuthDialog />
       <UpgradeDialog />
       <ChangePlanDialog />
+      <MfaChallengeDialog />
       <Toaster />
     </div>
   )

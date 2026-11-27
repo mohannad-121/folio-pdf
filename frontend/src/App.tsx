@@ -32,6 +32,7 @@ export default function App() {
         <Route path="account" element={<Lazy><Account /></Lazy>} />
         <Route path="login" element={<Lazy><AuthPage mode="signin" /></Lazy>} />
         <Route path="signup" element={<Lazy><AuthPage mode="signup" /></Lazy>} />
+        <Route path="forgot" element={<Lazy><AuthPage mode="forgot" /></Lazy>} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

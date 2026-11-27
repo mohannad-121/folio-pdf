@@ -264,9 +264,20 @@ def test_change_plan(bclient):
     }
 
 
-def test_delete_account_cancels_subscription(bclient):
+def test_delete_account_cancels_subscription(bclient, billing_on, monkeypatch):
+    from app import auth
+
+    monkeypatch.setattr(billing_on, "supabase_secret_key", "sb_secret_test")
+    admin_calls = []
+
+    def admin(request: httpx.Request) -> httpx.Response:
+        admin_calls.append((request.method, request.url.path))
+        return httpx.Response(200, json={"factors": []})
+
+    auth._admin_transport = httpx.MockTransport(admin)
     me = signup(bclient)
-    post_webhook(bclient, subscription_event(me["user"]["id"], status="active"))
+    uid = me["user"]["id"]
+    post_webhook(bclient, subscription_event(uid, status="active"))
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -274,9 +285,16 @@ def test_delete_account_cancels_subscription(bclient):
         return httpx.Response(200, json={"data": {"id": "sub_01test", "status": "canceled"}})
 
     _mock_paddle(handler)
-    r = bclient.request("DELETE", "/api/account", json={"password": "correct horse"})
-    assert r.status_code == 204
+    r = bclient.delete("/api/account")
+    assert r.status_code == 204, r.text
     assert seen == {"path": "/subscriptions/sub_01test/cancel", "body": {"effective_from": "immediately"}}
+    assert [c for c in admin_calls if c[0] == "DELETE"] == [("DELETE", f"/auth/v1/admin/users/{uid}")]
+    assert _user_or_none(uid) is None
+
+
+def _user_or_none(user_id: str):
+    with session_scope() as s:
+        return s.get(User, user_id)
 
 
 def test_api_keys_require_max_then_bearer_works(bclient):
@@ -294,7 +312,7 @@ def test_api_keys_require_max_then_bearer_works(bclient):
     listed = bclient.get("/api/account/api-keys").json()
     assert len(listed) == 1 and "key" not in listed[0] and listed[0]["prefix"] == key[:12]
 
-    # A cookie-less client authenticates with the key and can use Pro/Max features.
+    # A client without a Supabase session authenticates with the key and can use Pro/Max features.
     import io
 
     from fastapi.testclient import TestClient

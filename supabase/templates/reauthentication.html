@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<title>Confirm it's you</title>
+</head>
+<!-- Folio PDF: Supabase "Reauthentication" email template.
+     Paste into Supabase > Authentication > Emails > Templates > Reauthentication.
+     Subject: Confirm it's you: {{ .Token }} -->
+<body style="margin:0;padding:0;background-color:#f4f5fb;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f4f5fb;">Your Folio confirmation code is {{ .Token }}. It expires in 10 minutes.&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5fb;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+        <!-- Brand -->
+        <tr>
+          <td align="left" style="padding:0 8px 20px 8px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="40" height="40" align="center" valign="middle" bgcolor="#3443f5" style="width:40px;height:40px;border-radius:10px;background-color:#3443f5;background-image:linear-gradient(135deg,#4a63ff 0%,#3443f5 50%,#7c3aed 100%);font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:20px;font-weight:800;line-height:40px;color:#ffffff;">F</td>
+                <td style="padding-left:12px;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:-0.2px;color:#0f172a;">Folio<span style="color:#94a3b8;font-weight:600;"> PDF</span></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Card -->
+        <tr>
+          <td style="background-color:#ffffff;border:1px solid #e2e5f0;border-radius:16px;overflow:hidden;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td height="6" bgcolor="#3443f5" style="height:6px;line-height:6px;font-size:0;background-color:#3443f5;background-image:linear-gradient(90deg,#4a63ff 0%,#7c3aed 60%,#db2777 100%);border-radius:16px 16px 0 0;">&nbsp;</td>
+              </tr>
+              <tr>
+                <td style="padding:36px 40px 4px 40px;font-family:Segoe UI,Helvetica,Arial,sans-serif;">
+                  <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#3443f5;">Security check</p>
+                  <h1 style="margin:0 0 12px 0;font-size:26px;line-height:1.25;font-weight:800;letter-spacing:-0.4px;color:#0f172a;">Confirm it&rsquo;s you</h1>
+                  <p style="margin:0;font-size:16px;line-height:1.6;color:#475569;">You&rsquo;re making a sensitive change to your Folio account, such as a new password. Enter this code in Folio to confirm it&rsquo;s really you.</p>
+                </td>
+              </tr>
+              <!-- Code -->
+              <tr>
+                <td align="center" style="padding:28px 40px 4px 40px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                    <tr>
+                      <td align="center" bgcolor="#f1f3ff" style="background-color:#f1f3ff;border:1px solid #d9defe;border-radius:14px;padding:24px 16px;">
+                        <p style="margin:0 0 10px 0;font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#64748b;">Confirmation code</p>
+                        <p style="margin:0;padding-left:12px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:40px;line-height:48px;font-weight:700;letter-spacing:12px;color:#1e1b4b;mso-line-height-rule:exactly;">{{ .Token }}</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:16px 40px 0 40px;font-family:Segoe UI,Helvetica,Arial,sans-serif;">
+                  <p style="margin:0;font-size:14px;line-height:1.6;color:#475569;">This code expires in <strong style="color:#0f172a;">10 minutes</strong> and works once. </p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:24px 40px 36px 40px;font-family:Segoe UI,Helvetica,Arial,sans-serif;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="border-top:1px solid #e2e5f0;padding-top:20px;">
+                        <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;"><strong style="color:#334155;">Didn&rsquo;t request this?</strong> Someone else may be signed in to your account. Don&rsquo;t share this code, change your password, and turn on two-factor authentication in Account &rsaquo; Security.</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td align="center" style="padding:24px 16px 0 16px;font-family:Segoe UI,Helvetica,Arial,sans-serif;">
+            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.6;color:#94a3b8;">Sent to {{ .Email }} by Folio PDF &middot; every PDF tool in one place.</p>
+            <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">Folio will never ask you to share this code. <a href="{{ .SiteURL }}" style="color:#64748b;text-decoration:underline;">Open Folio</a></p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

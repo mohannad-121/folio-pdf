@@ -1,105 +1,155 @@
+"""Supabase access-token verification, MFA (aal2) enforcement and account endpoints."""
+
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import uuid
 
-from app.main import app
+import httpx
+import pytest
 
-from .conftest import signup
+from app import auth
+from app.db import ApiKey, User, session_scope
+
+from .conftest import SUPABASE_URL, _ec_key, make_token, post_webhook, set_plan, signup, subscription_event
 
 
-def test_signup_me_logout_login_flow(bclient):
-    me = signup(bclient, "Ada@Example.com")
-    assert me["user"]["email"] == "ada@example.com"
-    assert me["user"]["name"] == "Ada"
-    assert me["plan"] == "free" and me["billing_enabled"] is True
-    assert me["limits"]["max_file_mb"] == 10
-    assert me["usage"] == {"today": 0, "daily_limit": 5}
-    assert "folio_session" in bclient.cookies
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
-    r = bclient.get("/api/auth/me")
-    assert r.status_code == 200 and r.json()["user"]["email"] == "ada@example.com"
 
-    r = bclient.post("/api/auth/logout")
-    assert r.status_code == 204
-    assert "folio_session" not in bclient.cookies
-    assert bclient.get("/api/auth/me").json()["user"] is None
+# ---- token verification ---------------------------------------------------------------------
 
-    r = bclient.post("/api/auth/login", json={"email": "ADA@example.com", "password": "correct horse"})
+
+def test_valid_token_me(aclient, accounts_on):
+    uid = str(uuid.uuid4())
+    r = aclient.get("/api/auth/me", headers=_bearer(make_token(uid, "Ada@Example.com", name="Ada Lovelace")))
     assert r.status_code == 200, r.text
-    assert r.json()["user"]["email"] == "ada@example.com"
-    assert bclient.get("/api/auth/me").json()["user"] is not None
+    me = r.json()
+    assert me["user"]["id"] == uid
+    assert me["user"]["email"] == "ada@example.com"
+    assert me["user"]["name"] == "Ada Lovelace"
+    assert me["aal"] == "aal1" and me["mfa_enabled"] is False
+    assert me["accounts_enabled"] is True and me["billing_enabled"] is False
+    assert me["plan"] == "max"  # billing off: everything unlocked
+    assert accounts_on == [f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"]
+    # Keys are cached: a second request does not refetch the JWKS.
+    aclient.get("/api/auth/me", headers=_bearer(make_token(uid)))
+    assert len(accounts_on) == 1
 
 
-def test_cookie_attributes(bclient):
-    r = bclient.post("/api/auth/signup", json={"email": "c@example.com", "password": "password1"})
-    cookie = r.headers["set-cookie"]
-    assert cookie.startswith("folio_session=")
-    assert "HttpOnly" in cookie and "samesite=lax" in cookie.lower() and "Path=/" in cookie
-    assert "Secure" not in cookie
+def test_first_seen_upsert_then_stable(aclient):
+    uid = str(uuid.uuid4())
+    aclient.get("/api/auth/me", headers=_bearer(make_token(uid, "grace@example.com", name="Grace")))
+    with session_scope() as s:
+        u = s.get(User, uid)
+        assert u is not None and u.email == "grace@example.com" and u.name == "Grace"
+    # A renamed profile is kept locally; a changed email follows Supabase.
+    headers = _bearer(make_token(uid, "grace@example.com"))
+    r = aclient.patch("/api/account", json={"name": "Grace Hopper"}, headers=headers)
+    assert r.json()["user"]["name"] == "Grace Hopper"
+    me = aclient.get("/api/auth/me", headers=_bearer(make_token(uid, "g@navy.mil", name="Other"))).json()
+    assert me["user"]["name"] == "Grace Hopper" and me["user"]["email"] == "g@navy.mil"
+    with session_scope() as s:
+        assert s.query(User).count() == 1
 
 
-def test_wrong_password_and_unknown_email(bclient):
-    signup(bclient)
-    r = bclient.post("/api/auth/login", json={"email": "ada@example.com", "password": "nope nope"})
+def test_name_falls_back_to_metadata_name(aclient):
+    import time
+
+    import jwt
+
+    from .conftest import SIGNING_KEY, TEST_KID
+
+    now = int(time.time())
+    claims = {
+        "sub": str(uuid.uuid4()),
+        "email": "x@example.com",
+        "aud": "authenticated",
+        "iss": f"{SUPABASE_URL}/auth/v1",
+        "exp": now + 60,
+        "aal": "aal1",
+        "user_metadata": {"name": "Xavier"},
+    }
+    token = jwt.encode(claims, SIGNING_KEY, algorithm="ES256", headers={"kid": TEST_KID})
+    assert aclient.get("/api/auth/me", headers=_bearer(token)).json()["user"]["name"] == "Xavier"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"expires_in": -120},
+        {"aud": "anon"},
+        {"iss": "https://evil.supabase.co/auth/v1"},
+        {"key": _ec_key()},  # bad signature
+        {"kid": "unknown-kid"},
+    ],
+    ids=["expired", "bad-aud", "bad-iss", "bad-signature", "unknown-kid"],
+)
+def test_invalid_tokens_401(aclient, kwargs):
+    token = make_token(str(uuid.uuid4()), **kwargs)
+    r = aclient.get("/api/auth/me", headers=_bearer(token))
     assert r.status_code == 401
-    assert r.json()["detail"]["code"] == "invalid_credentials"
-    r = bclient.post("/api/auth/login", json={"email": "ghost@example.com", "password": "whatever1"})
-    assert r.status_code == 401
+    assert r.json()["detail"]["code"] == "invalid_token"
 
 
-def test_duplicate_signup_409_and_validation(bclient):
-    signup(bclient)
-    r = bclient.post("/api/auth/signup", json={"email": "ADA@example.com", "password": "another pw"})
-    assert r.status_code == 409
-    assert bclient.post("/api/auth/signup", json={"email": "not-an-email", "password": "longenough"}).status_code == 422
-    assert bclient.post("/api/auth/signup", json={"email": "x@example.com", "password": "short"}).status_code == 422
+def test_unknown_kid_triggers_refetch(aclient, accounts_on, monkeypatch):
+    new_key = _ec_key()
+    from .conftest import jwk_for
+
+    aclient.get("/api/auth/me", headers=_bearer(make_token(str(uuid.uuid4()))))
+    assert len(accounts_on) == 1
+    # Supabase rotated keys: the next fetch serves the new kid. Pretend the cache is old enough to refetch.
+    monkeypatch.setattr(auth, "_fetch_jwks", lambda url: {"keys": [jwk_for(new_key, "rotated")]})
+    auth._jwks.fetched_at -= auth.JWKS_MIN_REFETCH_SECONDS + 1
+    r = aclient.get("/api/auth/me", headers=_bearer(make_token(str(uuid.uuid4()), kid="rotated", key=new_key)))
+    assert r.status_code == 200, r.text
 
 
-def test_login_rate_limit(bclient):
-    signup(bclient)
-    bad = {"email": "ada@example.com", "password": "bad pass"}
-    for _ in range(10):
-        assert bclient.post("/api/auth/login", json=bad).status_code == 401
-    r = bclient.post("/api/auth/login", json={"email": "ada@example.com", "password": "correct horse"})
-    assert r.status_code == 429
-    assert r.json()["detail"]["code"] == "too_many_attempts"
+def test_hs256_and_garbage_rejected(aclient):
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    hs = jwt.encode(
+        {"sub": "u", "aud": "authenticated", "iss": f"{SUPABASE_URL}/auth/v1", "exp": now + 60},
+        "a-shared-secret-that-is-long-enough-for-hs256",
+        algorithm="HS256",
+        headers={"kid": "test-kid-1"},
+    )
+    assert aclient.get("/api/auth/me", headers=_bearer(hs)).status_code == 401
+    assert aclient.get("/api/auth/me", headers=_bearer("not.a.jwt")).status_code == 401
 
 
-def test_tampered_cookie_is_anonymous(bclient):
-    signup(bclient)
-    token = bclient.cookies.get("folio_session")
-    body, sig = token.split(".")
-    bclient.cookies.clear()
-    bclient.cookies.set("folio_session", body + "." + ("A" * len(sig)))
-    assert bclient.get("/api/auth/me").json()["user"] is None
+def test_no_token_is_anonymous(aclient):
+    me = aclient.get("/api/auth/me").json()
+    assert me["user"] is None and me["aal"] is None
 
 
-def test_account_update_password_and_delete(bclient):
-    signup(bclient)
-    r = bclient.patch("/api/account", json={"name": "Countess"})
-    assert r.status_code == 200 and r.json()["user"]["name"] == "Countess"
+def test_tokens_ignored_when_accounts_disabled(client):
+    from app.config import settings
 
-    old_cookie = bclient.cookies.get("folio_session")
-    r = bclient.post("/api/account/password", json={"current_password": "wrong one", "new_password": "newpassword"})
-    assert r.status_code == 401
-    r = bclient.post("/api/account/password", json={"current_password": "correct horse", "new_password": "newpassword"})
-    assert r.status_code == 200
-    # Older session tokens are invalidated; this browser got a fresh cookie.
-    with TestClient(app) as other:
-        other.cookies.set("folio_session", old_cookie)
-        assert other.get("/api/auth/me").json()["user"] is None
-    assert bclient.get("/api/auth/me").json()["user"] is not None
-
-    r = bclient.request("DELETE", "/api/account", json={"password": "correct horse"})
-    assert r.status_code == 401
-    r = bclient.request("DELETE", "/api/account", json={"password": "newpassword"})
-    assert r.status_code == 204
-    r = bclient.post("/api/auth/login", json={"email": "ada@example.com", "password": "newpassword"})
-    assert r.status_code == 401
+    assert not settings.accounts_enabled
+    r = client.get("/api/auth/me", headers=_bearer(make_token(str(uuid.uuid4()))))
+    assert r.status_code == 200 and r.json()["user"] is None
 
 
-def test_account_requires_login(bclient):
-    r = bclient.patch("/api/account", json={"name": "x"})
+def test_auth_config(aclient, client):
+    cfg = aclient.get("/api/auth/config").json()
+    assert cfg == {"enabled": True, "supabase_url": SUPABASE_URL, "publishable_key": "sb_publishable_test"}
+
+
+def test_auth_config_disabled(client):
+    assert client.get("/api/auth/config").json() == {"enabled": False, "supabase_url": "", "publishable_key": ""}
+
+
+def test_old_password_routes_are_gone(aclient):
+    for path in ("/api/auth/signup", "/api/auth/login", "/api/auth/logout", "/api/account/password"):
+        assert aclient.post(path, json={}).status_code in (404, 405)
+
+
+def test_account_requires_login(aclient):
+    r = aclient.patch("/api/account", json={"name": "x"})
     assert r.status_code == 401 and r.json()["detail"]["code"] == "login_required"
 
 
@@ -112,11 +162,145 @@ def test_me_anonymous_billing_disabled(client):
     assert me["usage"]["daily_limit"] is None
 
 
-def test_password_hash_format():
-    from app.auth import hash_password, verify_password
+# ---- MFA ----------------------------------------------------------------------------------
 
-    h = hash_password("s3cret-pass")
-    algo, n, r, p, salt, digest = h.split("$")
-    assert algo == "scrypt" and int(n) >= 2**14 and salt and digest
-    assert verify_password("s3cret-pass", h) and not verify_password("other", h)
-    assert hash_password("s3cret-pass") != h  # per-user random salt
+
+def _admin_with_factor(calls: list, verified: bool = True):
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, request.headers.get("apikey")))
+        status = "verified" if verified else "unverified"
+        return httpx.Response(200, json={"id": "x", "factors": [{"id": "f1", "factor_type": "totp", "status": status}]})
+
+    return httpx.MockTransport(handler)
+
+
+def test_aal1_with_factor_gets_mfa_required(bclient, billing_on, monkeypatch):
+    monkeypatch.setattr(billing_on, "supabase_secret_key", "sb_secret_test")
+    calls: list = []
+    auth._admin_transport = _admin_with_factor(calls)
+    me = signup(bclient)
+    uid = me["user"]["id"]
+    assert me["mfa_enabled"] is True and me["aal"] == "aal1"
+    r = bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"})
+    assert r.status_code == 403
+    assert r.json()["detail"] == {"code": "mfa_required", "message": "Enter your authenticator code to continue."}
+    assert calls[0] == ("GET", f"/auth/v1/admin/users/{uid}", "sb_secret_test")
+    assert len(calls) == 1  # cached for 60 s
+    # Account deletion and API keys are sensitive too.
+    assert bclient.delete("/api/account").json()["detail"]["code"] == "mfa_required"
+    set_plan(uid, "max")
+    assert bclient.get("/api/account/api-keys").status_code == 403
+    # Non-sensitive endpoints still work at aal1.
+    assert bclient.patch("/api/account", json={"name": "Ada L"}).status_code == 200
+
+
+def test_aal2_is_allowed(bclient, billing_on, monkeypatch):
+    monkeypatch.setattr(billing_on, "supabase_secret_key", "sb_secret_test")
+    calls: list = []
+    auth._admin_transport = _admin_with_factor(calls)
+    me = signup(bclient, aal="aal2", amr=["totp", "password"])
+    assert me["aal"] == "aal2" and me["mfa_enabled"] is True
+    r = bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"})
+    assert r.status_code == 200, r.text
+    assert r.json()["custom_data"] == {"user_id": me["user"]["id"]}
+    assert calls == []  # aal2 needs no lookup
+
+
+def test_aal1_without_verified_factor_is_allowed(bclient, billing_on, monkeypatch):
+    monkeypatch.setattr(billing_on, "supabase_secret_key", "sb_secret_test")
+    auth._admin_transport = _admin_with_factor([], verified=False)
+    signup(bclient)
+    assert bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"}).status_code == 200
+
+
+def test_mfa_check_can_be_disabled(bclient, billing_on, monkeypatch):
+    monkeypatch.setattr(billing_on, "supabase_secret_key", "sb_secret_test")
+    monkeypatch.setattr(billing_on, "require_mfa_for_sensitive", False)
+    auth._admin_transport = _admin_with_factor([])
+    signup(bclient)
+    assert bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"}).status_code == 200
+
+
+def test_no_factor_source_allows_and_warns_once(bclient, caplog):
+    signup(bclient)
+    with caplog.at_level("WARNING", logger="folio.auth"):
+        assert bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"}).status_code == 200
+        bclient.post("/api/billing/checkout", json={"plan": "pro", "interval": "monthly"})
+    assert sum("Cannot tell whether users have MFA" in r.message for r in caplog.records) == 1
+
+
+def test_checkout_uses_token_email(bclient):
+    signup(bclient, "verified@example.com")
+    with session_scope() as s:
+        u = s.scalar(__import__("sqlalchemy").select(User))
+        u.email = "stale@example.com"
+    r = bclient.post("/api/billing/checkout", json={"plan": "plus", "interval": "monthly"})
+    assert r.json()["customer"] == {"email": "verified@example.com"}
+
+
+# ---- account deletion ---------------------------------------------------------------------
+
+
+def test_delete_account_calls_admin_api(aclient, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "supabase_secret_key", "sb_secret_test")
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, request.headers.get("apikey")))
+        if request.method == "GET":
+            return httpx.Response(200, json={"factors": []})
+        return httpx.Response(200, json={})
+
+    auth._admin_transport = httpx.MockTransport(handler)
+    me = signup(aclient)
+    uid = me["user"]["id"]
+    r = aclient.delete("/api/account")
+    assert r.status_code == 204, r.text
+    assert ("DELETE", f"/auth/v1/admin/users/{uid}", "sb_secret_test") in calls
+    with session_scope() as s:
+        assert s.get(User, uid) is None
+
+
+def test_delete_account_without_secret_key_501(aclient):
+    me = signup(aclient)
+    r = aclient.delete("/api/account")
+    assert r.status_code == 501 and r.json()["detail"]["code"] == "secret_key_required"
+    with session_scope() as s:
+        assert s.get(User, me["user"]["id"]) is not None
+
+
+def test_delete_account_admin_failure_502(aclient, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "supabase_secret_key", "sb_secret_test")
+    auth._admin_transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"factors": []})
+        if request.method == "GET"
+        else httpx.Response(500, text="boom")
+    )
+    signup(aclient)
+    r = aclient.delete("/api/account")
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "auth_unavailable"
+
+
+# ---- API keys -----------------------------------------------------------------------------
+
+
+def test_api_key_path_still_works(bclient):
+    me = signup(bclient)
+    uid = me["user"]["id"]
+    post_webhook(bclient, subscription_event(uid, status="active", price_id="pri_max_m"))
+    key = bclient.post("/api/account/api-keys", json={"name": "CI"}).json()["key"]
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as api:
+        r = api.get("/api/auth/me", headers=_bearer(key))
+        assert r.status_code == 200 and r.json()["user"]["id"] == uid and r.json()["plan"] == "max"
+        assert r.json()["aal"] is None
+        assert api.get("/api/auth/me", headers=_bearer("folio_nope")).status_code == 401
+    with session_scope() as s:
+        assert s.query(ApiKey).count() == 1

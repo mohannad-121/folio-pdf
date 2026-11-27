@@ -1,7 +1,13 @@
 /**
  * API client. This is the ONLY place that knows about HTTP; the desktop wrapper
  * (Tauri/Electron) can swap `API_BASE` to point at a sidecar backend.
+ *
+ * Every request carries the Supabase access token (`Authorization: Bearer <jwt>`) when the user
+ * is signed in. A 403 `mfa_required` opens the authenticator-code dialog and retries once; a 401
+ * `invalid_token` refreshes the session and retries once.
  */
+import { getAccessToken, refreshAccessToken } from './supabase'
+import { requestMfa } from './mfa'
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
 
@@ -50,7 +56,7 @@ export interface PdfInfo {
 }
 
 /** Gating / error codes the backend puts in `detail.code`. */
-export type ApiErrorCode = 'upgrade_required' | 'file_too_large' | 'daily_limit' | 'login_required' | (string & {})
+export type ApiErrorCode = 'upgrade_required' | 'file_too_large' | 'daily_limit' | 'login_required' | 'mfa_required' | 'invalid_token' | (string & {})
 
 export class ApiError extends Error {
   status: number
@@ -109,9 +115,34 @@ async function handle<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T
 }
 
-/** Same-origin fetch that always sends the session cookie. */
-export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${API_BASE}${path}`, { credentials: 'include', ...init })
+async function errorCode(res: Response): Promise<string | undefined> {
+  if (!(res.headers.get('content-type') ?? '').includes('json')) return undefined
+  try {
+    const body = (await res.clone().json()) as { detail?: { code?: unknown } }
+    return typeof body?.detail?.code === 'string' ? body.detail.code : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function withAuth(init: RequestInit, token: string | null): RequestInit {
+  const headers = new Headers(init.headers)
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
+  return { credentials: 'include', ...init, headers }
+}
+
+/** Fetch an API path with the user's bearer token, handling MFA step-up and token refresh. */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = `${API_BASE}${path}`
+  let res = await fetch(url, withAuth(init, await getAccessToken()))
+  if (res.status === 401 && (await errorCode(res)) === 'invalid_token') {
+    const fresh = await refreshAccessToken()
+    if (fresh) res = await fetch(url, withAuth(init, fresh))
+  }
+  if (res.status === 403 && (await errorCode(res)) === 'mfa_required') {
+    if (await requestMfa()) res = await fetch(url, withAuth(init, await getAccessToken()))
+  }
+  return res
 }
 
 /** GET JSON from an API path (e.g. "/api/plans"). */
@@ -142,6 +173,7 @@ export function renderUrl(fileId: string, page: number, scale = 1.5, password?: 
 }
 
 export async function uploadFiles(files: File[], onProgress?: (frac: number) => void): Promise<FileOut[]> {
+  const token = await getAccessToken()
   // XHR so we get upload progress.
   return new Promise((resolve, reject) => {
     const form = new FormData()
@@ -149,6 +181,7 @@ export async function uploadFiles(files: File[], onProgress?: (frac: number) => 
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${API_BASE}/api/files`)
     xhr.withCredentials = true
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
     }

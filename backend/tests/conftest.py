@@ -82,10 +82,94 @@ TEST_PRICES = {
 }
 
 
+SUPABASE_URL = "https://testproject.supabase.co"
+TEST_KID = "test-kid-1"
+
+
+def _ec_key():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+# One P-256 key per test session; the fake JWKS serves its public half.
+SIGNING_KEY = _ec_key()
+
+
+def jwk_for(private_key, kid: str = TEST_KID) -> dict:
+    import json
+
+    from jwt.algorithms import ECAlgorithm
+
+    jwk = json.loads(ECAlgorithm.to_jwk(private_key.public_key()))
+    return {**jwk, "kid": kid, "alg": "ES256", "use": "sig"}
+
+
+def make_token(
+    sub: str,
+    email: str = "ada@example.com",
+    *,
+    name: str | None = "Ada",
+    aal: str = "aal1",
+    amr: list[str] | None = None,
+    expires_in: int = 3600,
+    aud: str = "authenticated",
+    iss: str | None = None,
+    kid: str = TEST_KID,
+    key=None,
+    alg: str = "ES256",
+) -> str:
+    """Sign a Supabase-style access token with the test key."""
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    claims = {
+        "sub": sub,
+        "email": email,
+        "aud": aud,
+        "iss": iss or f"{SUPABASE_URL}/auth/v1",
+        "iat": now,
+        "exp": now + expires_in,
+        "role": "authenticated",
+        "aal": aal,
+        "amr": [{"method": m, "timestamp": now} for m in (amr or ["password"])],
+        "session_id": "00000000-0000-4000-8000-000000000001",
+        "user_metadata": {"full_name": name} if name else {},
+        "app_metadata": {"provider": "email"},
+    }
+    return jwt.encode(claims, key or SIGNING_KEY, algorithm=alg, headers={"kid": kid})
+
+
 @pytest.fixture
-def billing_on(client, monkeypatch, tmp_path):
-    """Enable billing against a fresh, empty database. Yields the settings object."""
-    from app import auth, billing, db
+def accounts_on(client, monkeypatch, tmp_path):
+    """Supabase accounts against a fresh database and a fake JWKS (billing stays off)."""
+    from app import auth, db
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "supabase_url", SUPABASE_URL)
+    monkeypatch.setattr(settings, "supabase_publishable_key", "sb_publishable_test")
+    monkeypatch.setattr(settings, "supabase_secret_key", "")
+    jwks_calls: list[str] = []
+
+    def fake_fetch(url: str) -> dict:
+        jwks_calls.append(url)
+        return {"keys": [jwk_for(SIGNING_KEY)]}
+
+    monkeypatch.setattr(auth, "_fetch_jwks", fake_fetch)
+    auth.reset_auth_caches()
+    db.init_db(f"sqlite:///{tmp_path.as_posix()}/accounts.db")
+    yield jwks_calls
+    auth._admin_transport = None
+    auth.reset_auth_caches()
+    db.init_db()
+
+
+@pytest.fixture
+def billing_on(accounts_on, monkeypatch):
+    """Enable billing (and accounts) against a fresh, empty database. Yields the settings object."""
+    from app import billing
     from app.config import settings
 
     monkeypatch.setattr(settings, "billing_enabled", True)
@@ -95,24 +179,32 @@ def billing_on(client, monkeypatch, tmp_path):
     for tier, by_interval in TEST_PRICES.items():
         for interval, pid in by_interval.items():
             monkeypatch.setattr(settings, f"paddle_price_{tier}_{interval}", pid)
-    db.init_db(f"sqlite:///{tmp_path.as_posix()}/billing.db")
-    auth.reset_rate_limits()
     yield settings
     billing._transport = None
-    auth.reset_rate_limits()
-    db.init_db()
 
 
 @pytest.fixture
 def bclient(billing_on):
-    """A fresh TestClient (own cookie jar) with billing enabled."""
+    """A fresh TestClient (own headers) with billing enabled."""
     with TestClient(app) as c:
         yield c
 
 
-def signup(c: TestClient, email: str = "ada@example.com", password: str = "correct horse", name: str = "Ada") -> dict:
-    r = c.post("/api/auth/signup", json={"email": email, "password": password, "name": name})
-    assert r.status_code == 201, r.text
+@pytest.fixture
+def aclient(accounts_on):
+    """A fresh TestClient with accounts enabled and billing off."""
+    with TestClient(app) as c:
+        yield c
+
+
+def signup(c: TestClient, email: str = "ada@example.com", name: str = "Ada", **token_kw) -> dict:
+    """Sign ``c`` in as a new Supabase user: every later request carries a bearer token. Returns /me."""
+    import uuid
+
+    sub = token_kw.pop("sub", None) or str(uuid.uuid4())
+    c.headers["Authorization"] = "Bearer " + make_token(sub, email, name=name, **token_kw)
+    r = c.get("/api/auth/me")
+    assert r.status_code == 200, r.text
     return r.json()
 
 

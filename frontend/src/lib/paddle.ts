@@ -41,7 +41,8 @@ export interface CheckoutIntent {
 // UI state shared with the dialogs mounted in Layout
 // ---------------------------------------------------------------------------
 
-type AuthMode = 'signin' | 'signup'
+/** Which screen the auth flow opens on ('mfa' = finish a sign-in that still needs the authenticator code). */
+export type AuthMode = 'signin' | 'signup' | 'forgot' | 'mfa'
 
 interface CheckoutState {
   /** Plan being prepared (spinner on that CTA). */
@@ -201,6 +202,16 @@ export async function startCheckout(plan: Tier, interval: BillingInterval = 'mon
     }
     toast.error('Could not start checkout', e instanceof Error ? e.message : String(e))
   }
+}
+
+export type AuthDoneKind = 'signin' | 'signup' | 'reset'
+
+/** Toast after the auth flow finished. */
+export function announceAuth(kind: AuthDoneKind, intent: CheckoutIntent | null) {
+  const me = useAuth.getState().me
+  const who = me?.user?.name?.split(' ')[0] || me?.user?.email
+  if (kind === 'signin') toast.success(`Welcome back${who ? `, ${who}` : ''}`, intent ? 'Opening secure checkout…' : undefined)
+  else if (kind === 'signup') toast.success('Your account is ready', intent ? 'Opening secure checkout…' : undefined)
 }
 
 /** Called by the auth dialog after a successful sign-in / sign-up. */
