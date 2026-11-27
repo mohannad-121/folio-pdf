@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import { create } from 'zustand'
 import { CATEGORY_LABELS, CATEGORY_ORDER, TOOLS, TOOLS_BY_ID, toolsInCategory, type ToolDef } from '../lib/tools'
 import { categoryAccent } from '../lib/theme'
+import { searchTools } from '../lib/search'
 import ToolIcon from './ToolIcon'
 import { Dialog, Kbd } from './ui'
 import { useRecentTools } from './recentTools'
@@ -23,34 +24,6 @@ export const useCommandPalette = create<PaletteState>()((set) => ({
   setOpen: (open) => set({ open }),
   toggle: () => set((s) => ({ open: !s.open })),
 }))
-
-/** Fuzzy score: substring beats subsequence; word-start matches get a bonus. 0 = no match. */
-export function fuzzyScore(query: string, text: string): number {
-  const q = query.toLowerCase()
-  const t = text.toLowerCase()
-  if (!q) return 1
-  const idx = t.indexOf(q)
-  if (idx >= 0) return 100 - idx + (idx === 0 || /\s/.test(t[idx - 1]) ? 20 : 0)
-  let ti = 0
-  let score = 0
-  for (const ch of q) {
-    const found = t.indexOf(ch, ti)
-    if (found < 0) return 0
-    score += found === ti ? 3 : 1
-    if (found === 0 || /\s/.test(t[found - 1])) score += 2
-    ti = found + 1
-  }
-  return score
-}
-
-function searchTools(q: string): ToolDef[] {
-  const s = q.trim()
-  if (!s) return []
-  return TOOLS.map((t) => ({ t, score: Math.max(fuzzyScore(s, t.name) * 2, fuzzyScore(s, t.id), fuzzyScore(s, t.description) * 0.6, fuzzyScore(s, CATEGORY_LABELS[t.category]) * 0.5) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || Number(!!b.t.featured) - Number(!!a.t.featured))
-    .map((x) => x.t)
-}
 
 interface Group {
   label: string
