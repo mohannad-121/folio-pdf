@@ -86,7 +86,7 @@ export interface RedactMatch {
 /** Preview search-and-redact matches. The response shape is normalised to {page, rect}. */
 export async function redactPreview(fileId: string, q: RedactQuery): Promise<RedactMatch[]> {
   const params = new URLSearchParams()
-  if (q.terms.length) params.set('terms', q.terms.join(','))
+  for (const t of q.terms) params.append('terms', t)
   if (q.emails) params.set('emails', 'true')
   if (q.phones) params.set('phones', 'true')
   if (q.ssn) params.set('ssn', 'true')

@@ -163,6 +163,9 @@ def search(file_id: str, q: str, password: str | None = None):
     hits = []
     for i, p in enumerate(doc):
         for r in p.search_for(q):
+            # search_for works in unrotated page space; report displayed-space boxes.
+            r = r * p.rotation_matrix
+            r.normalize()
             hits.append({"page": i + 1, "x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
     doc.close()
     return {"query": q, "count": len(hits), "hits": hits}
