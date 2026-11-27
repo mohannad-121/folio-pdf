@@ -1158,20 +1158,22 @@ def _text_length(text: str, fk: dict[str, Any], size: float) -> float:
 
 
 def _stamp_text(page: pymupdf.Page, text: str, cx: float, cy: float, size: float, angle: float, fk, rgb, opacity, ov):
-    """Draw one line of text centred on displayed point (cx, cy), rotated by ``angle`` degrees."""
+    """Draw one line of text centred on displayed point (cx, cy), rotated by ``angle`` degrees.
+
+    Uses ``insert_text`` at a computed baseline rather than ``insert_textbox``: a textbox silently draws
+    nothing when the font's line height does not fit the box, which left watermarks blank."""
     tl = _text_length(text, fk, size)
-    disp = pymupdf.Rect(cx - tl / 2 - size, cy - size * 0.75, cx + tl / 2 + size, cy + size * 0.75)
-    ur = to_page_space(page, disp)
+    # Baseline sits ~0.35em below the centre so the cap height is vertically centred on (cx, cy).
+    start = to_page_space(page, pymupdf.Point(cx - tl / 2, cy + size * 0.35))
     morph = (to_page_space(page, pymupdf.Point(cx, cy)), pymupdf.Matrix(angle)) if angle % 360 else None
-    page.insert_textbox(
-        ur,
+    page.insert_text(
+        start,
         text,
         fontsize=size,
         color=rgb,
         fill_opacity=opacity,
         rotate=text_rotation(page),
         morph=morph,
-        align=1,
         overlay=ov,
         **fk,
     )

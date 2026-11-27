@@ -4,6 +4,7 @@ import datetime as dt
 import io
 
 import pymupdf
+import pytest
 
 from .conftest import download, make_pdf, upload
 
@@ -266,6 +267,20 @@ def test_watermark_text_center_tile_and_image(client, uploaded):
     out = open_out(client, r.json())
     assert len(out[0].get_images()) == 1
     assert client.post("/api/edit/watermark", json={"file_id": fid}).status_code == 422
+
+
+@pytest.mark.parametrize("page_rotation", [0, 90])
+@pytest.mark.parametrize("position", ["center", "top", "tile"])
+def test_text_watermark_is_drawn_with_base14_font(position, page_rotation):
+    # Regression: insert_textbox silently drew nothing when Helvetica's line height overflowed the box.
+    from app.tools.edit import WatermarkRequest, _text_watermark
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.set_rotation(page_rotation)
+    angle = 0 if position == "top" else 45  # a 45° stamp at the top edge runs partly off the page
+    _text_watermark(page, WatermarkRequest(text="CONFIDENTIAL", position=position, rotation=angle, font="helv"))
+    assert page.search_for("CONFIDENTIAL")
 
 
 def test_page_numbers(client, uploaded):
