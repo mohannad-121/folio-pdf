@@ -348,13 +348,16 @@ function FileField({ field, value, onChange, onExtraUpload }: FieldProps) {
   const [error, setError] = useState<string | null>(null)
   if (field.type !== 'file') return null
 
+  // Extensions all share one MIME key, so they must be merged (not overwritten): '.p12,.pfx' used to
+  // collapse to just '.pfx' and .p12 certificates were rejected.
   const accept = field.accept
-    ? Object.fromEntries(
-        field.accept.split(',').map((a) => {
-          const s = a.trim()
-          return s.startsWith('.') ? ['application/octet-stream', [s]] : [s, []]
-        }),
-      )
+    ? field.accept.split(',').reduce<Record<string, string[]>>((acc, a) => {
+        const s = a.trim()
+        if (!s) return acc
+        if (s.startsWith('.')) (acc['application/octet-stream'] ??= []).push(s)
+        else acc[s] ??= []
+        return acc
+      }, {})
     : undefined
 
   const upload = async (files: File[]) => {
