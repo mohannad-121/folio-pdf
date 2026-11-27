@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { PdfInfo } from '../lib/api'
 import type { PDFDocumentProxy } from './pdfjs'
@@ -44,6 +45,23 @@ export interface ScrollRequest {
 }
 
 export type SignPlacement = 'signature' | 'initials' | 'date'
+
+/**
+ * Display order of the pages (original 1-based numbers), from the pending `reorder_pages` edit.
+ * Everything else keeps addressing pages by original number; only layout and navigation use this.
+ */
+export function pageOrderOf(ops: PendingOp[], count: number): number[] {
+  const op = ops.find((p) => p.op.type === 'reorder_pages')?.op
+  if (op?.type === 'reorder_pages' && op.order.length === count) return op.order
+  return Array.from({ length: count }, (_, i) => i + 1)
+}
+
+/** Hook form of pageOrderOf (stable between renders while ops are unchanged). */
+export function usePageOrder(): number[] {
+  const ops = useViewer((s) => s.ops)
+  const count = useViewer((s) => s.info?.page_count ?? 0)
+  return useMemo(() => pageOrderOf(ops, count), [ops, count])
+}
 
 /** Settings for the next stamp placed in stamp mode (remembered per browser). */
 export interface StampSettings {
@@ -181,6 +199,10 @@ export interface ViewerState extends DocState {
   undo: () => void
   redo: () => void
   clearEdits: () => void
+  /** Move the page at display position `from` to position `to` (0-based), as an undoable edit. */
+  movePage: (from: number, to: number) => void
+  /** Go to the page `delta` positions away in display order. */
+  stepPage: (delta: number) => void
   setFormValue: (name: string, value: string | boolean, page: number) => void
   upsertAnnotUpdate: (xref: number, page: number, patch: { contents?: string; color?: string; opacity?: number }) => void
   addField: (f: NewFormField) => void
@@ -346,6 +368,28 @@ export const useViewer = create<ViewerState>()((set, get) => ({
       return { ops: next, past: [...s.past, s.ops], future: rest, selection: null, editingOpId: null }
     }),
   clearEdits: () => set({ ops: [], past: [], future: [], newFields: [], selection: null, editingOpId: null }),
+  movePage: (from, to) => {
+    const s = get()
+    const n = s.info?.page_count ?? 0
+    if (from === to || from < 0 || to < 0 || from >= n || to >= n) return
+    const order = pageOrderOf(s.ops, n).slice()
+    const [page] = order.splice(from, 1)
+    order.splice(to, 0, page)
+    const existing = s.ops.find((p) => p.op.type === 'reorder_pages')
+    const identity = order.every((p, i) => p === i + 1)
+    let next: PendingOp[]
+    if (identity) next = s.ops.filter((p) => p !== existing)
+    else if (existing) next = s.ops.map((p) => (p === existing ? { id: p.id, op: { type: 'reorder_pages', order } } : p))
+    else next = [...s.ops, { id: newId(), op: { type: 'reorder_pages', order } }]
+    s.commitOps(next)
+  },
+  stepPage: (delta) => {
+    const s = get()
+    const order = pageOrderOf(s.ops, s.info?.page_count ?? 0)
+    if (!order.length) return
+    const pos = Math.max(0, order.indexOf(s.currentPage))
+    s.scrollToPage(order[Math.min(order.length - 1, Math.max(0, pos + delta))])
+  },
   setFormValue: (name, value, page) => {
     const s = get()
     const existing = s.ops.find((p) => p.op.type === 'form_value' && p.op.field_name === name)

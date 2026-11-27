@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { PdfInfo } from '../../lib/api'
 import { pdfRectToCss, type PageGeom } from '../coords'
 import { useTextSelection, type SelectionInfo } from '../hooks/useTextSelection'
-import { useViewer } from '../store'
+import { usePageOrder, useViewer } from '../store'
 import type { LayoutMode, MarkupType, ViewRotation } from '../types'
 import PageView from './PageView'
 
@@ -38,32 +38,36 @@ function pageDims(info: PdfInfo, index: number, zoom: number, rotation: ViewRota
   return { w: (swapped ? p.height : p.width) * zoom, h: (swapped ? p.width : p.height) * zoom, geom }
 }
 
-function computeLayout(info: PdfInfo, zoom: number, rotation: ViewRotation, layout: LayoutMode, containerW: number, currentPage: number): LayoutData {
-  const n = info.page_count
+/**
+ * Page layout in display order. `order` lists original page numbers (see pageOrderOf); items keep
+ * their original number in `page`, so edits, scroll requests and the current page stay keyed by it.
+ */
+function computeLayout(info: PdfInfo, order: number[], zoom: number, rotation: ViewRotation, layout: LayoutMode, containerW: number, currentPage: number): LayoutData {
+  const n = order.length
   const items: LayoutItem[] = []
   if (layout === 'single') {
-    const i = Math.min(n, Math.max(1, currentPage)) - 1
-    const d = pageDims(info, i, zoom, rotation)
+    const page = Math.min(info.page_count, Math.max(1, currentPage))
+    const d = pageDims(info, page - 1, zoom, rotation)
     const totalW = Math.max(containerW, d.w + PAD * 2)
-    items.push({ page: i + 1, left: (totalW - d.w) / 2, top: PAD, w: d.w, h: d.h, geom: d.geom })
+    items.push({ page, left: (totalW - d.w) / 2, top: PAD, w: d.w, h: d.h, geom: d.geom })
     return { items, totalW, totalH: d.h + PAD * 2 }
   }
   if (layout === 'spread') {
     let maxRow = 0
-    const rows: { a: ReturnType<typeof pageDims>; b: ReturnType<typeof pageDims> | null }[] = []
+    const rows: { a: ReturnType<typeof pageDims>; ap: number; b: ReturnType<typeof pageDims> | null; bp: number }[] = []
     for (let i = 0; i < n; i += 2) {
-      const a = pageDims(info, i, zoom, rotation)
-      const b = i + 1 < n ? pageDims(info, i + 1, zoom, rotation) : null
-      rows.push({ a, b })
+      const a = pageDims(info, order[i] - 1, zoom, rotation)
+      const b = i + 1 < n ? pageDims(info, order[i + 1] - 1, zoom, rotation) : null
+      rows.push({ a, ap: order[i], b, bp: order[i + 1] })
       maxRow = Math.max(maxRow, a.w + (b ? GAP + b.w : 0))
     }
     const totalW = Math.max(containerW, maxRow + PAD * 2)
     let y = PAD
-    rows.forEach((r, ri) => {
+    rows.forEach((r) => {
       const rowW = r.a.w + (r.b ? GAP + r.b.w : 0)
       const left = (totalW - rowW) / 2
-      items.push({ page: ri * 2 + 1, left, top: y, w: r.a.w, h: r.a.h, geom: r.a.geom })
-      if (r.b) items.push({ page: ri * 2 + 2, left: left + r.a.w + GAP, top: y, w: r.b.w, h: r.b.h, geom: r.b.geom })
+      items.push({ page: r.ap, left, top: y, w: r.a.w, h: r.a.h, geom: r.a.geom })
+      if (r.b) items.push({ page: r.bp, left: left + r.a.w + GAP, top: y, w: r.b.w, h: r.b.h, geom: r.b.geom })
       y += Math.max(r.a.h, r.b?.h ?? 0) + GAP
     })
     return { items, totalW, totalH: y - GAP + PAD }
@@ -71,14 +75,14 @@ function computeLayout(info: PdfInfo, zoom: number, rotation: ViewRotation, layo
   let maxW = 0
   const dims = []
   for (let i = 0; i < n; i++) {
-    const d = pageDims(info, i, zoom, rotation)
+    const d = pageDims(info, order[i] - 1, zoom, rotation)
     dims.push(d)
     maxW = Math.max(maxW, d.w)
   }
   const totalW = Math.max(containerW, maxW + PAD * 2)
   let y = PAD
   dims.forEach((d, i) => {
-    items.push({ page: i + 1, left: (totalW - d.w) / 2, top: y, w: d.w, h: d.h, geom: d.geom })
+    items.push({ page: order[i], left: (totalW - d.w) / 2, top: y, w: d.w, h: d.h, geom: d.geom })
     y += d.h + GAP
   })
   return { items, totalW, totalH: y - GAP + PAD }
@@ -123,7 +127,8 @@ export default function DocumentView() {
   }, [info, fitMode, size, viewRotation, layout])
 
   const layoutPage = layout === 'single' ? currentPage : 0
-  const layoutData = useMemo<LayoutData | null>(() => (info ? computeLayout(info, zoom, viewRotation, layout, size.w, layoutPage) : null), [info, zoom, viewRotation, layout, size.w, layoutPage])
+  const order = usePageOrder()
+  const layoutData = useMemo<LayoutData | null>(() => (info ? computeLayout(info, order, zoom, viewRotation, layout, size.w, layoutPage) : null), [info, order, zoom, viewRotation, layout, size.w, layoutPage])
 
   const itemByPage = useMemo(() => {
     const m = new Map<number, LayoutItem>()

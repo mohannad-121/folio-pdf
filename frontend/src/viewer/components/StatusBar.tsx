@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { BookOpen, ChevronLeft, ChevronRight, Columns2, Maximize, MoveHorizontal, RotateCw, Rows3, ZoomIn, ZoomOut } from 'lucide-react'
 import { useState } from 'react'
-import { useViewer } from '../store'
+import { usePageOrder, useViewer } from '../store'
 import type { LayoutMode } from '../types'
 import { IconButton } from './ui'
 
@@ -9,7 +9,9 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]
 
 export default function StatusBar() {
   const pageCount = useViewer((s) => s.info?.page_count ?? 0)
-  const currentPage = useViewer((s) => s.currentPage)
+  // Positions follow the display order (pages may have been dragged into a new order).
+  const order = usePageOrder()
+  const currentPage = Math.max(1, order.indexOf(useViewer((s) => s.currentPage)) + 1)
   const zoom = useViewer((s) => s.zoom)
   const fitMode = useViewer((s) => s.fitMode)
   const layout = useViewer((s) => s.layout)
@@ -23,7 +25,7 @@ export default function StatusBar() {
 
   const go = (p: number) => {
     const n = Math.min(pageCount, Math.max(1, Math.round(p)))
-    if (Number.isFinite(n)) useViewer.getState().scrollToPage(n)
+    if (Number.isFinite(n) && order[n - 1]) useViewer.getState().scrollToPage(order[n - 1])
   }
 
   const layouts: { v: LayoutMode; label: string; icon: React.ReactNode }[] = [

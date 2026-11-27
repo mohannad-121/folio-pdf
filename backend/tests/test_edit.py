@@ -210,6 +210,38 @@ def test_apply_stamp(client):
         assert client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": [op]}).status_code == 422
 
 
+def _page_labels(doc: pymupdf.Document) -> list[str]:
+    return [p.get_text().split()[3] for p in doc]  # make_pdf writes "Hello Folio page N"
+
+
+def test_apply_reorder_pages_moves_page_and_keeps_its_edits(client):
+    pdf = upload(client, make_pdf(10))
+    order = [1, 2, 3, 4, 5, 6, 8, 7, 9, 10]  # page 7 dragged to 8th place
+    ops = [
+        # Edits address original page numbers, whatever their position in the list.
+        {"type": "text", "page": 7, "rect": [72, 300, 300, 330], "text": "NOTE ON SEVEN"},
+        {"type": "reorder_pages", "order": order},
+        {"type": "delete_page", "page": 2},
+    ]
+    r = client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": ops, "strict": True})
+    assert r.status_code == 200, r.text
+    out = open_out(client, r.json())
+    assert _page_labels(out) == ["1", "3", "4", "5", "6", "8", "7", "9", "10"]
+    assert out[6].search_for("NOTE ON SEVEN")  # the note travelled with page 7
+
+
+def test_apply_reorder_pages_validation(client):
+    pdf = upload(client, make_pdf(3))
+    bad = {"type": "reorder_pages", "order": [1, 1, 3]}
+    r = client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": [bad]})
+    assert r.status_code == 200 and r.json()["data"]["failed"] == 1
+    # Combined with an inserted page the order no longer lines up: skipped with a warning.
+    ops = [{"type": "insert_blank_page", "page": 1, "after_page": 1}, {"type": "reorder_pages", "order": [3, 2, 1]}]
+    r = client.post("/api/edit/apply", json={"file_id": pdf["file_id"], "ops": ops})
+    assert any("page order not applied" in w for w in r.json()["warnings"])
+    assert open_out(client, r.json()).page_count == 4
+
+
 @pytest.mark.parametrize("page_rotation", [0, 90, 180, 270])
 def test_stamp_lands_where_placed_on_rotated_pages(page_rotation):
     from app.tools.edit import draw_stamp, from_page_space

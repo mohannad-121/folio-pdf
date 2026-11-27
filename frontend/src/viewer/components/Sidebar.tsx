@@ -1,9 +1,12 @@
 import clsx from 'clsx'
-import { FilePlus2, FormInput, Images, List, MessageSquare, RotateCcw, RotateCw, Search, Trash2, X } from 'lucide-react'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, FilePlus2, FormInput, GripVertical, Images, List, MessageSquare, RotateCcw, RotateCw, Search, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { renderUrl } from '../../lib/api'
 import { opBounds, opColor, opLabel, opSummary } from '../ops'
-import { useViewer } from '../store'
+import { usePageOrder, useViewer } from '../store'
 import type { SidebarTab } from '../types'
 import { useFormValues } from '../hooks/useFormValues'
 import SearchPanel from './SearchPanel'
@@ -58,8 +61,11 @@ function ThumbnailsPanel() {
   const password = useViewer((s) => s.password)
   const currentPage = useViewer((s) => s.currentPage)
   const ops = useViewer((s) => s.ops)
+  const order = usePageOrder()
   const [menu, setMenu] = useState<{ page: number; x: number; y: number } | null>(null)
+  const [dragging, setDragging] = useState<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-thumb="${currentPage}"]`)
@@ -91,43 +97,138 @@ function ThumbnailsPanel() {
 
   if (!info || !fileId) return null
   const s = useViewer.getState()
+  const reorderOp = ops.find((p) => p.op.type === 'reorder_pages')
+  // Inserted blank pages shift the numbering, so reordering waits until they are saved (and vice versa).
+  const blankPending = ops.some((p) => p.op.type === 'insert_blank_page')
+  const canReorder = info.page_count > 1 && !blankPending
+
+  const onDragEnd = (e: DragEndEvent) => {
+    setDragging(null)
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    s.movePage(order.indexOf(Number(active.id)), order.indexOf(Number(over.id)))
+  }
+  const moveTo = (page: number, to: number) => {
+    s.movePage(order.indexOf(page), Math.max(0, Math.min(order.length - 1, to)))
+    setMenu(null)
+  }
+  const menuPos = menu ? order.indexOf(menu.page) : -1
+
   return (
-    <div ref={listRef} className="grid grid-cols-2 gap-3 p-3">
-      {info.pages.map((p, i) => {
-        const n = i + 1
-        const st = pageState.get(n)
-        const aspect = p.height / Math.max(1, p.width)
-        return (
-          <button
-            key={n}
-            type="button"
-            data-thumb={n}
-            onClick={() => s.scrollToPage(n)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              setMenu({ page: n, x: e.clientX, y: e.clientY })
-            }}
-            className={clsx('group relative flex flex-col items-center gap-1 rounded-md p-1.5 text-xs transition', currentPage === n ? 'bg-brand-50 ring-2 ring-brand-500 dark:bg-brand-900/30' : 'hover:bg-neutral-100 dark:hover:bg-neutral-800')}
-          >
-            <div className="relative w-full overflow-hidden rounded bg-white shadow" style={{ aspectRatio: `1 / ${aspect}` }}>
-              <img src={renderUrl(fileId, n, 0.25, password)} alt={`Page ${n}`} loading="lazy" decoding="async" className={clsx('h-full w-full object-contain transition-transform', st?.deleted && 'opacity-40 grayscale')} style={st?.rotate ? { transform: `rotate(${st.rotate}deg)` } : undefined} />
-              {st?.deleted && <span className="absolute inset-x-0 bottom-1 mx-auto w-max rounded bg-red-600 px-1 text-[10px] text-white">deleted</span>}
-              {!!st?.rotate && !st.deleted && <span className="absolute right-1 top-1 rounded bg-neutral-900/80 px-1 text-[10px] text-white">{((st.rotate % 360) + 360) % 360}°</span>}
-            </div>
-            <span className={clsx('tabular-nums', currentPage === n ? 'font-semibold text-brand-700 dark:text-brand-200' : 'text-neutral-500')}>{n}</span>
+    <div ref={listRef}>
+      <div className="flex items-center gap-1.5 px-3 pt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+        <GripVertical size={12} aria-hidden="true" />
+        <span className="flex-1">{blankPending ? 'Save the new blank page to reorder pages' : 'Drag pages to change their order'}</span>
+        {reorderOp && (
+          <button type="button" onClick={() => s.removeOp(reorderOp.id)} className="rounded px-1.5 py-0.5 font-medium text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/30">
+            Reset order
           </button>
-        )
-      })}
+        )}
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={(e) => setDragging(Number(e.active.id))} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
+        <SortableContext items={order} strategy={rectSortingStrategy}>
+          <div className="grid grid-cols-2 gap-3 p-3">
+            {order.map((n, i) => (
+              <PageThumb
+                key={n}
+                page={n}
+                position={i + 1}
+                aspect={info.pages[n - 1].height / Math.max(1, info.pages[n - 1].width)}
+                src={renderUrl(fileId, n, 0.25, password)}
+                state={pageState.get(n)}
+                current={currentPage === n}
+                draggable={canReorder}
+                lifted={dragging === n}
+                onOpen={() => s.scrollToPage(n)}
+                onMenu={(x, y) => setMenu({ page: n, x, y })}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
       {menu && (
-        <div className="fixed z-50 w-48 rounded-lg border border-neutral-200 bg-white py-1 text-sm shadow-xl dark:border-neutral-700 dark:bg-neutral-900" style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 180) }} onClick={(e) => e.stopPropagation()}>
-          <div className="px-3 py-1 text-xs font-medium text-neutral-500">Page {menu.page}</div>
+        <div className="fixed z-50 w-52 rounded-lg border border-neutral-200 bg-white py-1 text-sm shadow-xl dark:border-neutral-700 dark:bg-neutral-900" style={{ left: Math.min(menu.x, window.innerWidth - 216), top: Math.min(menu.y, window.innerHeight - 300) }} onClick={(e) => e.stopPropagation()}>
+          <div className="px-3 py-1 text-xs font-medium text-neutral-500">
+            Page {menuPos + 1}
+            {menu.page !== menuPos + 1 && ` (originally ${menu.page})`}
+          </div>
+          <MenuItem icon={<ChevronsUp size={14} />} label="Move to first" disabled={!canReorder || menuPos <= 0} onClick={() => moveTo(menu.page, 0)} />
+          <MenuItem icon={<ArrowUp size={14} />} label="Move earlier" disabled={!canReorder || menuPos <= 0} onClick={() => moveTo(menu.page, menuPos - 1)} />
+          <MenuItem icon={<ArrowDown size={14} />} label="Move later" disabled={!canReorder || menuPos >= order.length - 1} onClick={() => moveTo(menu.page, menuPos + 1)} />
+          <MenuItem icon={<ChevronsDown size={14} />} label="Move to last" disabled={!canReorder || menuPos >= order.length - 1} onClick={() => moveTo(menu.page, order.length - 1)} />
+          <div className="my-1 h-px bg-neutral-100 dark:bg-neutral-800" />
           <MenuItem icon={<RotateCcw size={14} />} label="Rotate left" onClick={() => (s.addOp({ type: 'rotate_page', page: menu.page, angle: -90 }, false), setMenu(null))} />
           <MenuItem icon={<RotateCw size={14} />} label="Rotate right" onClick={() => (s.addOp({ type: 'rotate_page', page: menu.page, angle: 90 }, false), setMenu(null))} />
-          <MenuItem icon={<FilePlus2 size={14} />} label="Insert blank page after" onClick={() => (s.addOp({ type: 'insert_blank_page', page: menu.page, after_page: menu.page }, false), setMenu(null))} />
+          <MenuItem icon={<FilePlus2 size={14} />} label="Insert blank page after" disabled={!!reorderOp} onClick={() => (s.addOp({ type: 'insert_blank_page', page: menu.page, after_page: menu.page }, false), setMenu(null))} />
           <MenuItem icon={<Trash2 size={14} />} label="Delete page" danger disabled={info.page_count <= 1} onClick={() => (s.addOp({ type: 'delete_page', page: menu.page }, false), setMenu(null))} />
         </div>
       )}
     </div>
+  )
+}
+
+function PageThumb({
+  page,
+  position,
+  aspect,
+  src,
+  state,
+  current,
+  draggable,
+  lifted,
+  onOpen,
+  onMenu,
+}: {
+  page: number
+  position: number
+  aspect: number
+  src: string
+  state?: { deleted: boolean; rotate: number }
+  current: boolean
+  draggable: boolean
+  lifted: boolean
+  onOpen: () => void
+  onMenu: (x: number, y: number) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: page, disabled: !draggable })
+  const moved = page !== position
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      data-thumb={page}
+      {...attributes}
+      {...listeners}
+      aria-label={`Page ${position}${moved ? `, originally page ${page}` : ''}`}
+      aria-roledescription={draggable ? 'draggable page' : undefined}
+      onClick={onOpen}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onMenu(e.clientX, e.clientY)
+      }}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={clsx(
+        'group relative flex touch-none flex-col items-center gap-1 rounded-md p-1.5 text-xs transition-[background-color,box-shadow]',
+        draggable && 'cursor-grab active:cursor-grabbing',
+        current ? 'bg-brand-50 ring-2 ring-brand-500 dark:bg-brand-900/30' : 'hover:bg-neutral-100 dark:hover:bg-neutral-800',
+        lifted && 'z-10 bg-white shadow-2xl ring-2 ring-brand-500 dark:bg-neutral-800',
+      )}
+    >
+      <div className="relative w-full overflow-hidden rounded bg-white shadow" style={{ aspectRatio: `1 / ${aspect}` }}>
+        <img src={src} alt="" draggable={false} loading="lazy" decoding="async" className={clsx('pointer-events-none h-full w-full object-contain transition-transform', state?.deleted && 'opacity-40 grayscale')} style={state?.rotate ? { transform: `rotate(${state.rotate}deg)` } : undefined} />
+        {state?.deleted && <span className="absolute inset-x-0 bottom-1 mx-auto w-max rounded bg-red-600 px-1 text-[10px] text-white">deleted</span>}
+        {!!state?.rotate && !state.deleted && <span className="absolute right-1 top-1 rounded bg-neutral-900/80 px-1 text-[10px] text-white">{((state.rotate % 360) + 360) % 360}°</span>}
+        {draggable && (
+          <span className="absolute left-1 top-1 grid size-5 place-items-center rounded bg-white/90 text-neutral-500 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-neutral-900/90" aria-hidden="true">
+            <GripVertical size={12} />
+          </span>
+        )}
+      </div>
+      <span className={clsx('tabular-nums', current ? 'font-semibold text-brand-700 dark:text-brand-200' : 'text-neutral-500')}>
+        {position}
+        {moved && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">was {page}</span>}
+      </span>
+    </button>
   )
 }
 

@@ -93,7 +93,7 @@ export function useKeyboardShortcuts(enabled: boolean, actions: ShortcutActions)
         case 'PageDown':
           if (e.key === 'PageDown' || s.layout === 'single') {
             e.preventDefault()
-            s.scrollToPage(Math.min(s.info?.page_count ?? 1, s.currentPage + 1))
+            s.stepPage(1)
           }
           return
         case 'ArrowUp':
@@ -101,16 +101,16 @@ export function useKeyboardShortcuts(enabled: boolean, actions: ShortcutActions)
         case 'PageUp':
           if (e.key === 'PageUp' || s.layout === 'single') {
             e.preventDefault()
-            s.scrollToPage(Math.max(1, s.currentPage - 1))
+            s.stepPage(-1)
           }
           return
         case 'Home':
           e.preventDefault()
-          s.scrollToPage(1)
+          s.stepPage(-Infinity)
           return
         case 'End':
           e.preventDefault()
-          s.scrollToPage(s.info?.page_count ?? 1)
+          s.stepPage(Infinity)
           return
         case '+':
         case '=':

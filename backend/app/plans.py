@@ -371,6 +371,7 @@ OP_TIERS: dict[str, Tier] = {
     "delete_page": "plus",
     "insert_blank_page": "plus",
     "move_page": "plus",
+    "reorder_pages": "free",  # same as the free Organize tool
     "form_value": "plus",
     "crop_page": "plus",
     "set_metadata": "plus",

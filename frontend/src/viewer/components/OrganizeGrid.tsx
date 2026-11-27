@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { renderUrl } from '../../lib/api'
 import { applyEdits, reorderPages } from '../api'
 import { newId } from '../ops'
-import { useViewer } from '../store'
+import { pageOrderOf, useViewer } from '../store'
 import type { EditOp } from '../types'
 import { btnCls, btnPrimaryCls, IconButton, Spinner } from './ui'
 
@@ -24,7 +24,8 @@ export default function OrganizeGrid() {
   const fileId = useViewer((s) => s.fileId)
   const password = useViewer((s) => s.password)
   const navigate = useNavigate()
-  const [items, setItems] = useState<Item[]>(() => (info ? info.pages.map((_, i) => ({ key: newId(), source: i + 1, rotation: 0 })) : []))
+  // Start from the order the pages were dragged into in the sidebar (if any).
+  const [items, setItems] = useState<Item[]>(() => (info ? pageOrderOf(useViewer.getState().ops, info.page_count).map((p) => ({ key: newId(), source: p, rotation: 0 })) : []))
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))

@@ -44,6 +44,8 @@ export type EditOp =
   | (PageOp & { type: 'signature'; rect: RectT; image_file_id: string })
   | (PageOp & { type: 'crop_page'; rect: RectT })
   | { type: 'set_metadata'; title: string; author: string; subject: string; keywords: string }
+  /** New page order as original 1-based page numbers (at most one per edit session). */
+  | { type: 'reorder_pages'; order: number[] }
 
 export type EditOpType = EditOp['type']
 

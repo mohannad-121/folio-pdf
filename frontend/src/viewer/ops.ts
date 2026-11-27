@@ -27,6 +27,7 @@ export function isVisualOp(op: EditOp): boolean {
     case 'replace_image':
     case 'delete_link':
     case 'crop_page':
+    case 'reorder_pages':
       return false
     default:
       return true
@@ -133,6 +134,7 @@ export function opLabel(op: EditOp): string {
     form_value: 'Form value',
     signature: 'Signature',
     stamp: 'Stamp',
+    reorder_pages: 'Page order',
     crop_page: 'Crop page',
     set_metadata: 'Document info',
   }
@@ -157,6 +159,10 @@ export function opSummary(op: EditOp): string {
       return op.title
     case 'stamp':
       return op.subtext ? `${op.text} · ${op.subtext}` : op.text
+    case 'reorder_pages': {
+      const moved = op.order.map((p, i) => [p, i + 1]).filter(([p, pos]) => p !== pos)
+      return moved.length <= 3 ? moved.map(([p, pos]) => `page ${p} → ${pos}`).join(', ') : `${moved.length} pages moved`
+    }
     default:
       return ''
   }

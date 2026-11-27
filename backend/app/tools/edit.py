@@ -658,6 +658,14 @@ class MovePageOp(_PageOp):
     to: int = Field(ge=1)
 
 
+class ReorderPagesOp(BaseModel):
+    """New page order, as original (1-based) page numbers. Applied after every other op and after
+    page deletions, so all other ops keep addressing pages by their original numbers."""
+
+    type: Literal["reorder_pages"]
+    order: list[int] = Field(min_length=1)
+
+
 class FormValueOp(BaseModel):
     type: Literal["form_value"]
     field_name: str
@@ -701,6 +709,7 @@ EditOp = Annotated[
     | DeletePageOp
     | InsertBlankPageOp
     | MovePageOp
+    | ReorderPagesOp
     | FormValueOp
     | CropPageOp
     | SetMetadataOp,
@@ -725,6 +734,9 @@ class _Ctx:
         self.redact_image_mode: dict[int, int] = {}
         self.deleted_pages: set[int] = set()
         self.signatures = 0
+        self.original_page_count = doc.page_count
+        self.page_order: list[int] | None = None
+        self.page_count_changed = False  # pages inserted/moved by other ops: original numbers no longer line up
 
     def page(self, no: int) -> pymupdf.Page:
         return get_page(self.doc, no)
@@ -1097,6 +1109,7 @@ def _op_insert_blank(ctx: _Ctx, op: InsertBlankPageOp):
     w = op.width or (ref.rect.width if ref else 595)
     h = op.height or (ref.rect.height if ref else 842)
     doc.new_page(pno=op.after_page if op.after_page < doc.page_count else -1, width=w, height=h)
+    ctx.page_count_changed = True
 
 
 def _op_move_page(ctx: _Ctx, op: MovePageOp):
@@ -1108,6 +1121,28 @@ def _op_move_page(ctx: _Ctx, op: MovePageOp):
     if src == dst:
         return
     doc.move_page(src, dst if dst < src else dst + 1)
+    ctx.page_count_changed = True
+
+
+def _op_reorder_pages(ctx: _Ctx, op: ReorderPagesOp):
+    n = ctx.original_page_count
+    if sorted(op.order) != list(range(1, n + 1)):
+        raise ValueError(f"order must list each of the {n} pages exactly once")
+    ctx.page_order = op.order  # applied at the end, see _apply_page_order
+
+
+def _apply_page_order(ctx: _Ctx, deleted: set[int]) -> None:
+    """Rearrange pages into ``ctx.page_order`` (original numbers), skipping deleted pages."""
+    if not ctx.page_order:
+        return
+    if ctx.page_count_changed:
+        ctx.warnings.append("page order not applied: save inserted or moved pages first, then reorder")
+        return
+    kept = [p for p in range(1, ctx.original_page_count + 1) if p not in deleted]
+    index = {p: i for i, p in enumerate(kept)}  # original number -> index after deletions
+    new = [index[p] for p in ctx.page_order if p in index]
+    if new != list(range(len(new))):
+        ctx.doc.select(new)
 
 
 def _op_form_value(ctx: _Ctx, op: FormValueOp):
@@ -1175,6 +1210,7 @@ _HANDLERS = {
     "delete_page": _op_delete_page,
     "insert_blank_page": _op_insert_blank,
     "move_page": _op_move_page,
+    "reorder_pages": _op_reorder_pages,
     "form_value": _op_form_value,
     "crop_page": _op_crop_page,
     "set_metadata": _op_set_metadata,
@@ -1202,12 +1238,15 @@ def apply(req: ApplyRequest):
             ctx.flush_all()
         except Exception as e:  # noqa: BLE001
             ctx.warnings.append(f"redaction failed: {e}")
+        deleted: set[int] = set()
         if ctx.deleted_pages:
             if len(ctx.deleted_pages) >= doc.page_count:
                 ctx.warnings.append("refusing to delete every page")
             else:
                 for pno in sorted(ctx.deleted_pages, reverse=True):
                     doc.delete_page(pno - 1)
+                deleted = set(ctx.deleted_pages)
+        _apply_page_order(ctx, deleted)
         if req.flatten:
             doc.bake(annots=True, widgets=True)
         name = req.output_name or with_suffix(sf.name, "-edited")
