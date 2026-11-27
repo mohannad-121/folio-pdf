@@ -1,43 +1,385 @@
 @import "tailwindcss";
 
+/* Dark mode follows <html data-theme="dark"> (set by src/lib/theme.ts + the inline script in index.html). */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* ------------------------------------------------------------------------- */
+/* Design tokens                                                              */
+/* ------------------------------------------------------------------------- */
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #d9e5ff;
-  --color-brand-200: #bcd0ff;
-  --color-brand-300: #8fb1ff;
-  --color-brand-400: #5b86ff;
-  --color-brand-500: #355cff;
-  --color-brand-600: #1f3df5;
-  --color-brand-700: #182fd6;
-  --color-brand-800: #1a2aad;
-  --color-brand-900: #1b2a88;
-}
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-:root {
-  color-scheme: light dark;
-}
+  /* Brand: a tuned indigo/blue. */
+  --color-brand-50: #eef3ff;
+  --color-brand-100: #dde6ff;
+  --color-brand-200: #c2d1ff;
+  --color-brand-300: #9ab2ff;
+  --color-brand-400: #6d87ff;
+  --color-brand-500: #4a63ff;
+  --color-brand-600: #3443f5;
+  --color-brand-700: #2a33d9;
+  --color-brand-800: #252cae;
+  --color-brand-900: #242c89;
+  --color-brand-950: #161a50;
 
-html, body, #root {
-  height: 100%;
-}
+  /* Category accents (hex so they are always emitted). */
+  --color-cat-organize-100: #ede9fe;
+  --color-cat-organize-400: #a78bfa;
+  --color-cat-organize-500: #8b5cf6;
+  --color-cat-organize-600: #7c3aed;
+  --color-cat-organize-700: #6d28d9;
 
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  background: var(--color-neutral-50);
-  color: var(--color-neutral-900);
-}
+  --color-cat-edit-100: #ffedd5;
+  --color-cat-edit-400: #fb923c;
+  --color-cat-edit-500: #f97316;
+  --color-cat-edit-600: #ea580c;
+  --color-cat-edit-700: #c2410c;
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: var(--color-neutral-950);
-    color: var(--color-neutral-100);
+  --color-cat-convert-from-100: #d1fae5;
+  --color-cat-convert-from-400: #34d399;
+  --color-cat-convert-from-500: #10b981;
+  --color-cat-convert-from-600: #059669;
+  --color-cat-convert-from-700: #047857;
+
+  --color-cat-convert-to-100: #e0f2fe;
+  --color-cat-convert-to-400: #38bdf8;
+  --color-cat-convert-to-500: #0ea5e9;
+  --color-cat-convert-to-600: #0284c7;
+  --color-cat-convert-to-700: #0369a1;
+
+  --color-cat-optimize-100: #ffe4e6;
+  --color-cat-optimize-400: #fb7185;
+  --color-cat-optimize-500: #f43f5e;
+  --color-cat-optimize-600: #e11d48;
+  --color-cat-optimize-700: #be123c;
+
+  --color-cat-security-100: #fee2e2;
+  --color-cat-security-400: #f87171;
+  --color-cat-security-500: #ef4444;
+  --color-cat-security-600: #dc2626;
+  --color-cat-security-700: #b91c1c;
+
+  --color-cat-forms-sign-100: #ccfbf1;
+  --color-cat-forms-sign-400: #2dd4bf;
+  --color-cat-forms-sign-500: #14b8a6;
+  --color-cat-forms-sign-600: #0d9488;
+  --color-cat-forms-sign-700: #0f766e;
+
+  --color-cat-review-100: #fae8ff;
+  --color-cat-review-400: #e879f9;
+  --color-cat-review-500: #d946ef;
+  --color-cat-review-600: #c026d3;
+  --color-cat-review-700: #a21caf;
+
+  /* Radii scale. */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+
+  /* Shadows. --accent is set per element (defaults to brand). */
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.05), 0 16px 40px -16px rgb(15 23 42 / 0.2);
+  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--accent, var(--color-brand-500)) 40%, transparent),
+    0 14px 44px -14px color-mix(in oklab, var(--accent, var(--color-brand-500)) 55%, transparent);
+  --shadow-ring: 0 0 0 3px color-mix(in oklab, var(--accent, var(--color-brand-500)) 30%, transparent);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-drift: drift 18s ease-in-out infinite alternate;
+  --animate-drift-slow: drift 28s ease-in-out infinite alternate-reverse;
+  --animate-float: float 5s ease-in-out infinite;
+  --animate-indeterminate: indeterminate 1.4s var(--ease-out-soft) infinite;
+  --animate-fade-in: fade-in 180ms var(--ease-out-soft) both;
+  --animate-pop: pop 220ms var(--ease-spring) both;
+
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+  @keyframes drift {
+    from { transform: translate3d(-4%, -2%, 0) scale(1); }
+    to { transform: translate3d(5%, 4%, 0) scale(1.08); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  @keyframes indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1); }
   }
 }
 
-/* pdf.js text layer */
+/* Semantic surfaces flip with the theme, so they are plain custom properties
+   exposed to Tailwind via @theme inline (bg-surface, text-fg, border-border, …). */
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-canvas: var(--canvas);
+  --shadow-card: var(--card-shadow);
+}
+
+/* Light: warm-neutral paper. Secondary text is >= 4.5:1 on --surface. */
+:root {
+  color-scheme: light;
+  --canvas: #f7f7fa;
+  --surface: #ffffff;
+  --surface-2: #f2f3f7;
+  --surface-3: #e8eaf1;
+  --border: #e4e6ee;
+  --border-strong: #cfd3df;
+  --fg: #0d1021;
+  --muted: #555b70;
+  --muted-2: #6f7589;
+  --glass: rgb(255 255 255 / 0.72);
+  --grid-line: rgb(13 16 33 / 0.07);
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 1px 2px rgb(13 16 33 / 0.05), 0 12px 32px -18px rgb(13 16 33 / 0.22);
+  --card-wash-strength: 9%;
+}
+
+/* Dark: deep navy ink (not gray) so colored glows read as light, not dirt. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #080a14;
+  --surface: #0f1220;
+  --surface-2: #161a2c;
+  --surface-3: #1d2237;
+  --border: #212740;
+  --border-strong: #2f3756;
+  --fg: #eef0f9;
+  --muted: #a6adc8;
+  --muted-2: #7f88a8;
+  --glass: rgb(8 10 20 / 0.7);
+  --grid-line: rgb(255 255 255 / 0.06);
+  --card-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -20px rgb(0 0 0 / 0.7);
+  --card-wash-strength: 14%;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Base                                                                       */
+/* ------------------------------------------------------------------------- */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    background: var(--canvas);
+    color: var(--fg);
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-brand-500) 28%, transparent);
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent, var(--color-brand-500));
+    outline-offset: 2px;
+  }
+  button, [role="button"], a, input, select, textarea {
+    outline-color: var(--color-brand-500);
+  }
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  button:not(:disabled):active, a.btn-press:active {
+    transform: scale(0.98);
+  }
+  input[type="number"] {
+    font-variant-numeric: tabular-nums;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-2) 45%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--muted-2) 75%, transparent);
+    background-clip: padding-box;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-2) 45%, transparent) transparent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Utilities                                                                  */
+/* ------------------------------------------------------------------------- */
+
+@utility glass {
+  background: var(--glass);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+}
+
+@utility text-gradient {
+  background-image: linear-gradient(100deg, var(--color-brand-600), var(--color-cat-organize-500) 45%, var(--color-cat-review-500) 80%, var(--color-cat-edit-500));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility text-gradient-accent {
+  background-image: linear-gradient(100deg, var(--accent, var(--color-brand-500)), color-mix(in oklab, var(--accent, var(--color-brand-500)) 60%, white));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Faint dotted grid; the spotlight follows --mx/--my (set in JS). */
+@utility bg-grid {
+  background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@utility spotlight {
+  background: radial-gradient(520px circle at var(--mx, 50%) var(--my, 30%), color-mix(in oklab, var(--color-brand-500) 14%, transparent), transparent 60%);
+}
+
+@utility bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  opacity: 0.035;
+  mix-blend-mode: multiply;
+}
+
+/* Display type: tight tracking + heavy weight for headlines. */
+@utility text-display {
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+@utility text-title {
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+@utility text-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Layered card: hairline top highlight, soft shadow, optional accent wash. */
+@utility card-wash {
+  background-image: linear-gradient(140deg, color-mix(in oklab, var(--accent, var(--color-brand-500)) var(--card-wash-strength), var(--color-surface)) 0%, var(--color-surface) 55%);
+}
+@utility card-wash-strong {
+  background-image: linear-gradient(140deg, color-mix(in oklab, var(--accent, var(--color-brand-500)) calc(var(--card-wash-strength) * 2.2), var(--color-surface)) 0%, color-mix(in oklab, var(--accent, var(--color-brand-500)) 4%, var(--color-surface)) 70%);
+}
+/* Gradient border (1px) in the accent color, via two background layers. */
+@utility ring-gradient {
+  border-color: transparent;
+  background: linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+    linear-gradient(135deg, var(--accent, var(--color-brand-500)), color-mix(in oklab, var(--accent, var(--color-brand-500)) 35%, var(--color-cat-review-500))) border-box;
+}
+/* Tinted section band in the accent color. */
+@utility section-wash {
+  background-image:
+    radial-gradient(900px 320px at 0% 0%, color-mix(in oklab, var(--accent, var(--color-brand-500)) 9%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in oklab, var(--accent, var(--color-brand-500)) 4%, transparent), transparent 70%);
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Field (input/select/textarea) base look. */
+@utility field {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  &::placeholder {
+    color: var(--muted-2);
+  }
+  &:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--border-strong), var(--fg) 15%);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--accent, var(--color-brand-500));
+    box-shadow: var(--shadow-ring);
+  }
+  &[aria-invalid="true"] {
+    border-color: var(--color-red-500);
+    --accent: var(--color-red-500);
+  }
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* pdf.js text layer (used by src/viewer)                                     */
+/* ------------------------------------------------------------------------- */
 .textLayer {
   position: absolute;
   inset: 0;
@@ -56,7 +398,7 @@ body {
   transform-origin: 0% 0%;
 }
 .textLayer ::selection {
-  background: rgba(53, 92, 255, 0.35);
+  background: rgba(74, 99, 255, 0.35);
 }
 .textLayer .highlight {
   background: rgba(255, 220, 0, 0.45);

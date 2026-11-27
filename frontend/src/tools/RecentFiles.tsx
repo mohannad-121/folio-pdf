@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Clock, X } from 'lucide-react'
 import clsx from 'clsx'
 import { ApiError, formatBytes, getFile, type FileOut } from '../lib/api'
+import { tween } from '../lib/motion'
 import ToolFileThumb from '../components/ToolFileThumb'
+import { Badge, EmptyState } from '../components/ui'
 import { selectFresh, useRecentFiles, type RecentFile } from './store'
 
 interface Props {
@@ -22,6 +25,7 @@ export default function RecentFiles({ canUse, onPick }: Props) {
   const clear = useRecentFiles((s) => s.clear)
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const reduce = useReducedMotion()
 
   const pick = async (f: RecentFile) => {
     const ok = canUse(f)
@@ -47,55 +51,58 @@ export default function RecentFiles({ canUse, onPick }: Props) {
   }
 
   return (
-    <aside className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900" aria-label="Recent files">
+    <aside className="h-fit rounded-2xl border border-border bg-surface p-4 shadow-soft lg:sticky lg:top-20" aria-label="Recent files">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold">
-          <Clock size={14} className="text-neutral-400" /> Recent files
+        <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+          <Clock size={14} className="text-muted-2" /> Recent files
         </h2>
         {files.length > 0 && (
-          <button type="button" onClick={clear} className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+          <button type="button" onClick={clear} className="rounded-md px-1.5 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg">
             Clear
           </button>
         )}
       </div>
-      {notice && (
-        <p className="mb-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200" role="status">
-          {notice}
-        </p>
-      )}
+      <AnimatePresence initial={false}>
+        {notice && (
+          <motion.p key="notice" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mb-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30" role="status">
+            {notice}
+          </motion.p>
+        )}
+      </AnimatePresence>
       {files.length === 0 ? (
-        <p className="text-xs text-neutral-500">Files you upload or produce show up here for 24 hours, so you can reuse them across tools.</p>
+        <EmptyState compact icon={<Clock />} title="Nothing yet" description="Files you upload or produce show up here for 24 hours, so you can reuse them across tools." />
       ) : (
         <ul className="-mx-1 space-y-0.5">
-          {files.map((f) => (
-            <li key={f.file_id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-neutral-50 dark:hover:bg-neutral-800/60">
-              <button
-                type="button"
-                onClick={() => pick(f)}
-                disabled={busy === f.file_id}
-                className={clsx('flex min-w-0 flex-1 items-center gap-2 text-left', busy === f.file_id && 'opacity-60')}
-                title={`Use "${f.name}" with this tool`}
-              >
-                <ToolFileThumb name={f.name} contentType={f.content_type} fileId={f.file_id} className="h-10 w-8" scale={0.15} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{f.name}</span>
-                  <span className="block text-xs text-neutral-500">
-                    {formatBytes(f.size)}
-                    {f.page_count != null && ` · ${f.page_count} p`} · {relTime(f.ts)}
-                    {f.origin === 'output' && <span className="ml-1 rounded bg-brand-50 px-1 text-[10px] text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">result</span>}
+          <AnimatePresence initial={false}>
+            {files.map((f) => (
+              <motion.li key={f.file_id} layout={!reduce} initial={reduce ? false : { opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -8 }} transition={tween} className="group flex items-center gap-2 rounded-lg px-1 py-1 transition-colors hover:bg-surface-2">
+                <button
+                  type="button"
+                  onClick={() => pick(f)}
+                  disabled={busy === f.file_id}
+                  className={clsx('flex min-w-0 flex-1 items-center gap-2 rounded-md text-left', busy === f.file_id && 'opacity-60')}
+                  title={`Use "${f.name}" with this tool`}
+                >
+                  <ToolFileThumb name={f.name} contentType={f.content_type} fileId={f.file_id} className="h-10 w-8" scale={0.15} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{f.name}</span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted tabular">
+                      {formatBytes(f.size)}
+                      {f.page_count != null && ` · ${f.page_count} p`} · {relTime(f.ts)}
+                      {f.origin === 'output' && (
+                        <Badge tone="brand" className="ml-0.5">
+                          result
+                        </Badge>
+                      )}
+                    </span>
                   </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => remove(f.file_id)}
-                className="rounded p-1 text-neutral-400 opacity-0 transition group-hover:opacity-100 hover:text-red-600 focus:opacity-100"
-                aria-label={`Forget ${f.name}`}
-              >
-                <X size={14} />
-              </button>
-            </li>
-          ))}
+                </button>
+                <button type="button" onClick={() => remove(f.file_id)} className="rounded-md p-1 text-muted-2 opacity-0 transition group-hover:opacity-100 hover:bg-surface-3 hover:text-red-600 focus:opacity-100" aria-label={`Forget ${f.name}`}>
+                  <X size={14} />
+                </button>
+              </motion.li>
+            ))}
+          </AnimatePresence>
         </ul>
       )}
     </aside>

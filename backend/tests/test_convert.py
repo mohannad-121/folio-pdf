@@ -270,8 +270,16 @@ def test_text_to_pdf_csv(client):
 
 
 def test_html_to_pdf_ssrf_rejected(client):
-    for url in ("http://127.0.0.1/", "http://localhost:8000/x", "http://10.1.2.3/", "http://192.168.1.1/",
-                "http://169.254.169.254/latest", "http://[::1]/", "file:///etc/passwd", "ftp://example.com/"):
+    for url in (
+        "http://127.0.0.1/",
+        "http://localhost:8000/x",
+        "http://10.1.2.3/",
+        "http://192.168.1.1/",
+        "http://169.254.169.254/latest",
+        "http://[::1]/",
+        "file:///etc/passwd",
+        "ftp://example.com/",
+    ):
         r = client.post("/api/convert/html-to-pdf", json={"url": url})
         assert r.status_code == 400, (url, r.text)
     assert client.post("/api/convert/html-to-pdf", json={}).status_code == 400

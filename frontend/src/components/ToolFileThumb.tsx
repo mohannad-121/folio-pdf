@@ -15,9 +15,10 @@ interface Props {
   className?: string
 }
 
-/** Small thumbnail: PDF first page, image preview, or a type icon. */
+/** Small thumbnail: PDF first page, image preview, or a type icon. Shimmers until the image loads. */
 export default function ToolFileThumb({ name, contentType, fileId, previewUrl, scale = 0.25, className }: Props) {
   const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const isPdf = contentType === 'application/pdf' || /\.pdf$/i.test(name)
   const isImage = contentType.startsWith('image/')
   let src: string | undefined
@@ -30,12 +31,26 @@ export default function ToolFileThumb({ name, contentType, fileId, previewUrl, s
   return (
     <div
       className={clsx(
-        'grid shrink-0 place-items-center overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 text-neutral-400 dark:border-neutral-700 dark:bg-neutral-800',
+        'relative grid shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-surface-2 text-muted-2 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.4)] dark:shadow-none',
         className ?? 'h-14 w-11',
       )}
       aria-hidden="true"
     >
-      {src ? <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" onError={() => setFailed(true)} /> : icon}
+      {src ? (
+        <>
+          {!loaded && <span className="skeleton absolute inset-0" />}
+          <img
+            src={src}
+            alt=""
+            className={clsx('h-full w-full object-cover transition-opacity duration-300', loaded ? 'opacity-100' : 'opacity-0')}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+          />
+        </>
+      ) : (
+        icon
+      )}
     </div>
   )
 }

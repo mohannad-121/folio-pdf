@@ -84,8 +84,14 @@ def test_redact_preview_and_apply(client):
     fid = f["file_id"]
     prev = client.get(
         f"/api/security/redact/preview/{fid}",
-        params={"emails": True, "phones": True, "ssn": True, "credit_cards": True, "iban": True,
-                "terms": ["confidential"]},
+        params={
+            "emails": True,
+            "phones": True,
+            "ssn": True,
+            "credit_cards": True,
+            "iban": True,
+            "terms": ["confidential"],
+        },
     )
     assert prev.status_code == 200, prev.text
     p = prev.json()
@@ -96,15 +102,32 @@ def test_redact_preview_and_apply(client):
     # preview does not modify the file
     assert "jane.doe@example.com" in _open(download(client, f))[0].get_text()
 
-    body = {"file_id": fid, "emails": True, "phones": True, "ssn": True, "credit_cards": True, "iban": True,
-            "terms": "confidential\n", "regex": r"public"}
+    body = {
+        "file_id": fid,
+        "emails": True,
+        "phones": True,
+        "ssn": True,
+        "credit_cards": True,
+        "iban": True,
+        "terms": "confidential\n",
+        "regex": r"public",
+    }
     r = client.post("/api/security/redact", json=body)
     assert r.status_code == 200, r.text
     res = r.json()
     assert res["data"]["matches"] == 9 and res["data"]["per_page"] == {"1": 9}
     text = _open(download(client, res["outputs"][0]))[0].get_text()
-    for gone in ("jane.doe@example.com", "john@mail", "555", "7946", "123-45-6789", "4111", "DE89", "Confidential",
-                 "public"):
+    for gone in (
+        "jane.doe@example.com",
+        "john@mail",
+        "555",
+        "7946",
+        "123-45-6789",
+        "4111",
+        "DE89",
+        "Confidential",
+        "public",
+    ):
         assert gone not in text, (gone, text)
     for kept in ("Contact:", "Call", "on file", "1234 5678 9012 3456", "Totally"):
         assert kept in text, (kept, text)
@@ -123,8 +146,13 @@ def test_redact_terms_regions_and_options(client):
     prev = client.get(f"/api/security/redact/preview/{fid}", params={"terms": "fox", "pages": "2"}).json()
     assert prev["count"] == 1 and prev["matches"][0]["page"] == 2
 
-    body = {"file_id": fid, "terms": ["lazy dog"], "pages": "1", "fill_color": "#ff0000",
-            "regions": [{"page": 2, "rects": [[60, 55, 300, 95]]}]}
+    body = {
+        "file_id": fid,
+        "terms": ["lazy dog"],
+        "pages": "1",
+        "fill_color": "#ff0000",
+        "regions": [{"page": 2, "rects": [[60, 55, 300, 95]]}],
+    }
     r = client.post("/api/security/redact", json=body)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["matches"] == 2

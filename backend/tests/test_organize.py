@@ -99,9 +99,7 @@ def test_extract_delete_duplicate(client):
 def test_rotate_multiple(client):
     a = upload(client, make_pdf(2), "a.pdf")
     b = upload(client, make_pdf(1), "b.pdf")
-    r = client.post(
-        "/api/organize/rotate", json={"file_ids": [a["file_id"], b["file_id"]], "angle": 90, "pages": "1"}
-    )
+    r = client.post("/api/organize/rotate", json={"file_ids": [a["file_id"], b["file_id"]], "angle": 90, "pages": "1"})
     assert r.status_code == 200, r.text
     outs = r.json()["outputs"]
     assert len(outs) == 2
@@ -123,9 +121,7 @@ def test_insert_blank_and_pdf(client):
     assert doc[1].rect.width == 595
 
     other = upload(client, make_pdf(1, "Other"), "other.pdf")
-    r = client.post(
-        "/api/organize/insert", json={"file_id": f["file_id"], "at": 0, "insert_file_id": other["file_id"]}
-    )
+    r = client.post("/api/organize/insert", json={"file_id": f["file_id"], "at": 0, "insert_file_id": other["file_id"]})
     doc = _open(download(client, r.json()["outputs"][0]))
     assert doc.page_count == 3 and "Other" in doc[0].get_text()
     assert client.post("/api/organize/insert", json={"file_id": f["file_id"], "blank_count": 0}).status_code == 400

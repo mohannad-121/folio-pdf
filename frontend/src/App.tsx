@@ -5,6 +5,10 @@ import NotFound from './pages/NotFound'
 import { ViewerPage } from './viewer'
 import { ToolPage } from './tools'
 
+/**
+ * Routes. Page transitions (fade + slide, keyed on pathname) live in Layout so the
+ * header, nav underline and theme toggle persist across navigations.
+ */
 export default function App() {
   return (
     <Routes>
