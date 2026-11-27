@@ -3,6 +3,9 @@
 ``app.routers.files`` is the core API. Every module in ``app.tools`` that
 exposes a module-level ``router`` (an ``APIRouter``) is auto-registered, so
 adding a tool means adding one file — nothing else to wire up.
+
+Tool routers are included with the :func:`app.entitlements.enforce_tool` dependency, so plan
+gating applies to every tool (including new ones) without touching the tool modules.
 """
 
 from __future__ import annotations
@@ -11,8 +14,10 @@ import importlib
 import logging
 import pkgutil
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 
+from .. import auth, billing, plans
+from ..entitlements import enforce_tool
 from . import files
 
 log = logging.getLogger("folio")
@@ -20,7 +25,10 @@ log = logging.getLogger("folio")
 
 def register_all(app: FastAPI) -> list[str]:
     app.include_router(files.router)
-    registered = ["files"]
+    app.include_router(auth.router)
+    app.include_router(billing.router)
+    app.include_router(plans.router)
+    registered = ["files", "auth", "billing", "plans"]
 
     from .. import tools as tools_pkg
 
@@ -34,6 +42,6 @@ def register_all(app: FastAPI) -> list[str]:
             continue
         router = getattr(mod, "router", None)
         if isinstance(router, APIRouter):
-            app.include_router(router)
+            app.include_router(router, dependencies=[Depends(enforce_tool)])
             registered.append(mod_info.name)
     return registered

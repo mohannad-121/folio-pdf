@@ -12,6 +12,7 @@ from starlette.responses import FileResponse
 
 from . import __version__
 from .config import settings
+from .db import init_db
 from .jobs import jobs
 from .routers import register_all
 from .storage import store
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Folio PDF API", version=__version__, lifespan=lifespan)
+    init_db()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -53,7 +55,7 @@ def create_app() -> FastAPI:
     log.info("Registered tool routers: %s", ", ".join(registered))
 
     # Serve the built frontend if present (single-container deploys).
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    dist = settings.static_dir or Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 

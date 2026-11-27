@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pymupdf as fitz
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from ..entitlements import UploadLimit, upload_limit
 from ..jobs import jobs
 from ..pdfutil import file_out, open_pdf
 from ..schemas import FileOut, JobOut
@@ -16,10 +17,13 @@ router = APIRouter(prefix="/api", tags=["files"])
 
 
 @router.post("/files", response_model=list[FileOut])
-async def upload(files: list[UploadFile] = File(...)):
+async def upload(files: list[UploadFile] = File(...), limit: UploadLimit | None = Depends(upload_limit)):
     out: list[FileOut] = []
     for f in files:
-        sf = await store.save_upload(f)
+        if limit is None:
+            sf = await store.save_upload(f)
+        else:
+            sf = await store.save_upload(f, max_bytes=limit.max_bytes, too_large_detail=limit.detail)
         out.append(file_out(sf))
     return out
 

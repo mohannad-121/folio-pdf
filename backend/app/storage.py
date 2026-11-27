@@ -17,7 +17,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from fastapi import HTTPException, UploadFile
 
@@ -88,7 +88,11 @@ class FileStore:
         except HTTPException:
             return False
 
-    async def save_upload(self, upload: UploadFile) -> StoredFile:
+    async def save_upload(
+        self, upload: UploadFile, max_bytes: int | None = None, too_large_detail: Any = None
+    ) -> StoredFile:
+        """Stream an upload to disk. ``max_bytes`` (e.g. a plan limit) tightens the server cap."""
+        limit = settings.max_upload_bytes if max_bytes is None else min(max_bytes, settings.max_upload_bytes)
         file_id = self.new_id()
         d = self._dir(file_id)
         d.mkdir(parents=True, exist_ok=False)
@@ -98,10 +102,10 @@ class FileStore:
         with target.open("wb") as out:
             while chunk := await upload.read(1024 * 1024):
                 size += len(chunk)
-                if size > settings.max_upload_bytes:
+                if size > limit:
                     out.close()
                     shutil.rmtree(d, ignore_errors=True)
-                    raise HTTPException(status_code=413, detail="File too large")
+                    raise HTTPException(status_code=413, detail=too_large_detail or "File too large")
                 out.write(chunk)
         ctype = upload.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
         sf = StoredFile(file_id, name, size, ctype, time.time(), str(target))

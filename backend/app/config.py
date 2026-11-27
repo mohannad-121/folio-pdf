@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,48 @@ class Settings(BaseSettings):
     tesseract_bin: str = ""  # Tesseract OCR
     # Default OCR languages (tesseract codes, '+'-separated).
     ocr_languages: str = "eng"
+    # Built frontend to serve (SPA). None = <repo>/frontend/dist when it exists (desktop app sets this).
+    static_dir: Path | None = None
+
+    # ---- accounts & billing -------------------------------------------------------------
+    # False = self-hosted open-source edition: every tool unlocked, accounts optional,
+    # billing endpoints report ``enabled: false``.
+    billing_enabled: bool = False
+    # SQLAlchemy URL. Empty = sqlite:///<data_dir>/folio.db.
+    database_url: str = ""
+    # Key that signs session cookies. Empty = generated once and persisted in <data_dir>/.secret_key.
+    secret_key: str = ""
+    session_days: int = 30
+    # Set to true when served over HTTPS so the session cookie gets the Secure flag.
+    cookie_secure: bool = False
+    # Use the first X-Forwarded-For hop as the client IP (only behind a trusted reverse proxy).
+    trust_proxy: bool = False
+    # Paddle Billing.
+    paddle_environment: Literal["sandbox", "production"] = "sandbox"
+    paddle_client_token: str = ""  # client-side token for Paddle.js
+    paddle_api_key: str = ""  # server-side API key
+    paddle_webhook_secret: str = ""  # notification destination secret key (pdl_ntfset_...)
+    paddle_price_plus_monthly: str = ""
+    paddle_price_plus_yearly: str = ""
+    paddle_price_pro_monthly: str = ""
+    paddle_price_pro_yearly: str = ""
+    paddle_price_max_monthly: str = ""
+    paddle_price_max_yearly: str = ""
+    # Display only; the real trial is configured on the Paddle prices.
+    trial_days: int = 7
+    # Public URL of the frontend (checkout success redirect).
+    public_url: str = "http://localhost:5173"
+
+    @property
+    def paddle_api_base(self) -> str:
+        if self.paddle_environment == "production":
+            return "https://api.paddle.com"
+        return "https://sandbox-api.paddle.com"
+
+    def resolved_database_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+        return f"sqlite:///{(self.data_dir / 'folio.db').resolve().as_posix()}"
 
 
 settings = Settings()
